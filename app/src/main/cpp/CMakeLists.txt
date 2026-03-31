@@ -41,6 +41,16 @@ add_library(
              Memory/MemoryBackup.cpp
              Memory/MemoryPatch.cpp)
 
+# BNM native lib
+target_include_directories(
+        native-lib
+        PRIVATE
+        ${BNM_INCLUDE}
+        ${BNM_EXTERNAL_INCLUDE})
+
+# And add libBNM.a to target_link_libraries:
+set(BNM_LIB ${CMAKE_CURRENT_SOURCE_DIR}/libs/arm64-v8a/libBNM.a)
+
 
 find_library(log-lib log)
 find_library(egl EGL)
