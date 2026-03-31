@@ -102,6 +102,23 @@ jobs:
           ls -la "$CURL_CMAKE_DIR/"
           echo "------------------------"
 
+      - name: Debug – list cpp sources
+        run: |
+          echo "--- Repo root ---"
+          ls
+          echo "--- cpp dir ---"
+          ls app/src/main/cpp/
+          echo "--- ByNameModding ---"
+          ls app/src/main/cpp/ByNameModding/ || echo "MISSING"
+          echo "--- ImGui ---"
+          ls app/src/main/cpp/ImGui/ || echo "MISSING"
+          echo "--- Memory ---"
+          ls app/src/main/cpp/Memory/ || echo "MISSING"
+          echo "--- http/cpr ---"
+          ls app/src/main/cpp/http/cpr/ || echo "MISSING"
+          echo "--- Obfuscation ---"
+          ls app/src/main/cpp/Obfuscation/ || echo "MISSING"
+
       # ── 8. Configure the main project ────────────────────────────────────────
       # curl_DIR (lowercase) matches find_package(curl ...) in CMakeLists.txt.
       # It points at the directory now containing curlConfig.cmake.
