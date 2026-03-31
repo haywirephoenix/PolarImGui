@@ -11,35 +11,35 @@ add_library(
              ImGui/imgui_widgets.cpp
              ImGui/imgui_demo.cpp
              ImGui/imgui_draw.cpp
-             ByNameModding/bnm.cpp
-        http/cpr/async.cpp
-        http/cpr/auth.cpp
-        http/cpr/bearer.cpp
-        http/cpr/cookies.cpp
-        http/cpr/cprtypes.cpp
-        http/cpr/curl_container.cpp
-        http/cpr/curlholder.cpp
-        http/cpr/error.cpp
-        http/cpr/multipart.cpp
-        http/cpr/parameters.cpp
-        http/cpr/payload.cpp
-        http/cpr/proxies.cpp
-        http/cpr/proxyauth.cpp
-        http/cpr/session.cpp
-        http/cpr/threadpool.cpp
-        http/cpr/timeout.cpp
-        http/cpr/unix_socket.cpp
-        http/cpr/util.cpp
-        http/cpr/response.cpp
-        http/cpr/redirect.cpp
-        http/cpr/interceptor.cpp
-        Obfuscation/instr.cpp
-        Memory/KittyArm64.cpp
-        Memory/KittyMemory.cpp
-        Memory/KittyScanner.cpp
-        Memory/KittyUtils.cpp
-        Memory/MemoryBackup.cpp
-        Memory/MemoryPatch.cpp)
+             ByNameModding/BNM.cpp        
+             http/cpr/async.cpp
+             http/cpr/auth.cpp
+             http/cpr/bearer.cpp
+             http/cpr/cookies.cpp
+             http/cpr/cprtypes.cpp
+             http/cpr/curl_container.cpp
+             http/cpr/curlholder.cpp
+             http/cpr/error.cpp
+             http/cpr/multipart.cpp
+             http/cpr/parameters.cpp
+             http/cpr/payload.cpp
+             http/cpr/proxies.cpp
+             http/cpr/proxyauth.cpp
+             http/cpr/session.cpp
+             http/cpr/threadpool.cpp
+             http/cpr/timeout.cpp
+             http/cpr/unix_socket.cpp
+             http/cpr/util.cpp
+             http/cpr/response.cpp
+             http/cpr/redirect.cpp
+             http/cpr/interceptor.cpp
+             Obfuscation/instr.cpp
+             Memory/KittyArm64.cpp
+             Memory/KittyMemory.cpp
+             Memory/KittyScanner.cpp
+             Memory/KittyUtils.cpp
+             Memory/MemoryBackup.cpp
+             Memory/MemoryPatch.cpp)
 
 
 find_library(log-lib log)
