@@ -47,7 +47,7 @@ find_library(egl EGL)
 find_library(android android)
 find_library(GLESV2_LIB GLESv2)
 find_library(LZ_LIB z)
-find_package(curl REQUIRED CONFIG)
+find_package(CURL REQUIRED CONFIG)
 if (${ANDROID_PLATFORM_LEVEL} LESS 12)
     message(FATAL_ERROR "OpenGL 2 is not supported before API level 11 /
                       (currently using ${ANDROID_PLATFORM_LEVEL}).")
@@ -72,4 +72,4 @@ target_link_libraries(
         ${android}
         ${egl}
         ${log-lib}
-        curl::curl_static)
+        CURL::libcurl)
