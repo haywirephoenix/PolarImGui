@@ -72,56 +72,11 @@ jobs:
           cmake --build curl-build --parallel
           cmake --install curl-build
 
-      # ── 7. Fix curl CMake config case mismatch ───────────────────────────────
-      # The project's CMakeLists.txt calls find_package(curl CONFIG REQUIRED)
-      # with a lowercase 'curl'. On Linux (case-sensitive filesystem) CMake looks
-      # for curlConfig.cmake or curl-config.cmake — but curl's build system
-      # installs CURLConfig.cmake (uppercase). These names do not match.
-      #
-      # We create lowercase symlinks so both the config file and the hint
-      # variable curl_DIR resolve correctly.
-      - name: Create lowercase curl CMake config symlinks
-        run: |
-          CURL_CMAKE_DIR="$PWD/curl-install/lib/cmake/CURL"
-
-          echo "--- Installed curl cmake files ---"
-          find curl-install -name "*.cmake" | sort
-          echo "---------------------------------"
-
-          # curlConfig.cmake  →  CURLConfig.cmake
-          ln -s "$CURL_CMAKE_DIR/CURLConfig.cmake" \
-                "$CURL_CMAKE_DIR/curlConfig.cmake"
-
-          # curlConfigVersion.cmake  →  CURLConfigVersion.cmake (if present)
-          if [ -f "$CURL_CMAKE_DIR/CURLConfigVersion.cmake" ]; then
-            ln -s "$CURL_CMAKE_DIR/CURLConfigVersion.cmake" \
-                  "$CURL_CMAKE_DIR/curlConfigVersion.cmake"
-          fi
-
-          echo "--- After symlinking ---"
-          ls -la "$CURL_CMAKE_DIR/"
-          echo "------------------------"
-
-      - name: Debug – list cpp sources
-        run: |
-          echo "--- Repo root ---"
-          ls
-          echo "--- cpp dir ---"
-          ls app/src/main/cpp/
-          echo "--- ByNameModding ---"
-          ls app/src/main/cpp/ByNameModding/ || echo "MISSING"
-          echo "--- ImGui ---"
-          ls app/src/main/cpp/ImGui/ || echo "MISSING"
-          echo "--- Memory ---"
-          ls app/src/main/cpp/Memory/ || echo "MISSING"
-          echo "--- http/cpr ---"
-          ls app/src/main/cpp/http/cpr/ || echo "MISSING"
-          echo "--- Obfuscation ---"
-          ls app/src/main/cpp/Obfuscation/ || echo "MISSING"
-
-      # ── 8. Configure the main project ────────────────────────────────────────
-      # curl_DIR (lowercase) matches find_package(curl ...) in CMakeLists.txt.
-      # It points at the directory now containing curlConfig.cmake.
+      # ── 7. Configure the main project ────────────────────────────────────────
+      # CMakeLists.txt must use:
+      #   find_package(CURL REQUIRED CONFIG)
+      #   target_link_libraries(... CURL::libcurl)
+      # These match the target name curl's CMake build actually exports.
       - name: Configure CMake
         env:
           NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -135,13 +90,13 @@ jobs:
             -DANDROID_PLATFORM_LEVEL=21 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_STANDARD=17 \
-            -Dcurl_DIR="$PWD/curl-install/lib/cmake/CURL"
+            -DCURL_DIR="$PWD/curl-install/lib/cmake/CURL"
 
-      # ── 9. Build ─────────────────────────────────────────────────────────────
+      # ── 8. Build ─────────────────────────────────────────────────────────────
       - name: Build
         run: cmake --build build --parallel
 
-      # ── 10. Upload ───────────────────────────────────────────────────────────
+      # ── 9. Upload ────────────────────────────────────────────────────────────
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
