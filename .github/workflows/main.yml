@@ -14,23 +14,18 @@ jobs:
           submodules: recursive
 
       # ── 2. NDK ───────────────────────────────────────────────────────────────
-      # The action exposes the path via outputs.ndk-path, NOT $ANDROID_NDK_ROOT.
-      # We capture it with an id so every later step can use it consistently.
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
           ndk-version: r25c
-          add-to-path: true   # puts clang / cmake wrappers on PATH
+          add-to-path: true
 
       # ── 3. Tools ─────────────────────────────────────────────────────────────
       - name: Install build tools
         run: sudo apt-get install -y ninja-build cmake
 
       # ── 4. Dobby guard ───────────────────────────────────────────────────────
-      # libdobby.a must exist at app/src/main/cpp/libs/arm64-v8a/libdobby.a.
-      # If it is NOT committed to the repo this step will fail fast and tell you
-      # exactly what is missing rather than producing a cryptic linker error.
       - name: Verify libdobby.a is present
         run: |
           DOBBY_PATH="app/src/main/cpp/libs/arm64-v8a/libdobby.a"
@@ -42,20 +37,24 @@ jobs:
           echo "libdobby.a found – OK"
 
       # ── 5. Cross-compile curl (static) for arm64-v8a ─────────────────────────
-      # The CMakeLists.txt calls find_package(curl REQUIRED CONFIG) and links
-      # against curl::curl_static. There is no Android arm64 curl on the runner,
-      # so we build curl from source using the same NDK toolchain and install it
-      # to a local prefix that we pass to CMake in the next step.
+      # curl's CMake build installs its config file as:
+      #   <prefix>/lib/cmake/CURL/CURLConfig.cmake   (uppercase CURL)
+      # The correct CMake hint variable is therefore CURL_DIR (uppercase),
+      # not curl_DIR. This was the root cause of the "Could not find a package
+      # configuration file" error in the previous run.
       #
-      # SSL is disabled here (CURL_ENABLE_SSL=OFF) to keep the build
-      # self-contained. If you need HTTPS in your mod menu you can add a prior
-      # step that cross-compiles OpenSSL for arm64 and pass its prefix to curl
-      # via -DOPENSSL_ROOT_DIR=...
+      # Additional flags vs the previous attempt:
+      #   BUILD_STATIC_LIBS=ON      – the correct flag to produce libcurl.a
+      #   CURL_STATICLIB=ON         – tells curl's own headers it is static
+      #   CURL_USE_PKGCONFIG=OFF    – pkg-config finds host libs, not Android ones
+      #   CURL_USE_OPENSSL=OFF      – avoids needing a cross-compiled OpenSSL
+      #   CURL_ENABLE_SSL=OFF       – belt-and-suspenders: no SSL backend at all
       - name: Download curl source
         run: |
           CURL_VER=8.7.1
-          curl -fsSL "https://curl.se/download/curl-${CURL_VER}.tar.gz" \
-            -o curl.tar.gz
+          # GitHub releases mirror – avoids the curl.se 403 on Actions runners
+          wget -q "https://github.com/curl/curl/releases/download/curl-8_7_1/curl-${CURL_VER}.tar.gz" \
+            -O curl.tar.gz
           tar xf curl.tar.gz
           echo "CURL_SRC=$PWD/curl-${CURL_VER}" >> $GITHUB_ENV
 
@@ -72,22 +71,30 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$PWD/curl-install" \
             -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_STATIC_LIBS=ON \
             -DCURL_STATICLIB=ON \
             -DCURL_ENABLE_SSL=OFF \
+            -DCURL_USE_OPENSSL=OFF \
             -DCURL_USE_LIBPSL=OFF \
             -DCURL_USE_LIBSSH2=OFF \
+            -DCURL_USE_PKGCONFIG=OFF \
             -DBUILD_CURL_EXE=OFF \
             -DBUILD_TESTING=OFF
 
           cmake --build curl-build --parallel
           cmake --install curl-build
 
+          # Sanity-check: confirm the config file exists where we expect it
+          # before handing control to the main project configure step.
+          echo "--- Installed curl cmake files ---"
+          find curl-install -name "*.cmake" | sort
+          echo "---------------------------------"
+
       # ── 6. Configure the main project ────────────────────────────────────────
-      # Key fixes vs the original workflow:
-      #   • NDK path comes from steps.setup-ndk.outputs.ndk-path (not $ANDROID_NDK_ROOT)
-      #   • -Dcurl_DIR points CMake at the config files we just installed
-      #   • -DANDROID_PLATFORM_LEVEL=21 prevents the FATAL_ERROR in CMakeLists.txt
-      #     (the legacy toolchain does not set ANDROID_PLATFORM_LEVEL automatically)
+      # CURL_DIR (uppercase) is the correct hint variable for CURLConfig.cmake.
+      # curl_DIR (lowercase) is silently ignored by CMake's find_package, which
+      # is why the previous run could not locate the config file even though it
+      # had been installed correctly.
       - name: Configure CMake
         env:
           NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -101,17 +108,16 @@ jobs:
             -DANDROID_PLATFORM_LEVEL=21 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_STANDARD=17 \
-            -Dcurl_DIR="$PWD/curl-install/lib/cmake/CURL"
+            -DCURL_DIR="$PWD/curl-install/lib/cmake/CURL"
 
       # ── 7. Build ─────────────────────────────────────────────────────────────
       - name: Build
         run: cmake --build build --parallel
 
       # ── 8. Upload ────────────────────────────────────────────────────────────
-      # Use a recursive glob – the .so may land in a subdirectory of build/
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Polar-ImGui-Arm64
           path: build/**/*.so
-          if-no-files-found: error   # fail loudly rather than uploading nothing
+          if-no-files-found: error
