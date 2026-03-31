@@ -36,28 +36,16 @@ jobs:
           fi
           echo "libdobby.a found – OK"
 
-      # ── 5. Cross-compile curl (static) for arm64-v8a ─────────────────────────
-      # curl's CMake build installs its config file as:
-      #   <prefix>/lib/cmake/CURL/CURLConfig.cmake   (uppercase CURL)
-      # The correct CMake hint variable is therefore CURL_DIR (uppercase),
-      # not curl_DIR. This was the root cause of the "Could not find a package
-      # configuration file" error in the previous run.
-      #
-      # Additional flags vs the previous attempt:
-      #   BUILD_STATIC_LIBS=ON      – the correct flag to produce libcurl.a
-      #   CURL_STATICLIB=ON         – tells curl's own headers it is static
-      #   CURL_USE_PKGCONFIG=OFF    – pkg-config finds host libs, not Android ones
-      #   CURL_USE_OPENSSL=OFF      – avoids needing a cross-compiled OpenSSL
-      #   CURL_ENABLE_SSL=OFF       – belt-and-suspenders: no SSL backend at all
+      # ── 5. Download curl source ───────────────────────────────────────────────
       - name: Download curl source
         run: |
           CURL_VER=8.7.1
-          # GitHub releases mirror – avoids the curl.se 403 on Actions runners
           wget -q "https://github.com/curl/curl/releases/download/curl-8_7_1/curl-${CURL_VER}.tar.gz" \
             -O curl.tar.gz
           tar xf curl.tar.gz
           echo "CURL_SRC=$PWD/curl-${CURL_VER}" >> $GITHUB_ENV
 
+      # ── 6. Cross-compile curl (static) for arm64-v8a ──────────────────────────
       - name: Build curl for arm64-v8a
         env:
           NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -84,17 +72,39 @@ jobs:
           cmake --build curl-build --parallel
           cmake --install curl-build
 
-          # Sanity-check: confirm the config file exists where we expect it
-          # before handing control to the main project configure step.
+      # ── 7. Fix curl CMake config case mismatch ───────────────────────────────
+      # The project's CMakeLists.txt calls find_package(curl CONFIG REQUIRED)
+      # with a lowercase 'curl'. On Linux (case-sensitive filesystem) CMake looks
+      # for curlConfig.cmake or curl-config.cmake — but curl's build system
+      # installs CURLConfig.cmake (uppercase). These names do not match.
+      #
+      # We create lowercase symlinks so both the config file and the hint
+      # variable curl_DIR resolve correctly.
+      - name: Create lowercase curl CMake config symlinks
+        run: |
+          CURL_CMAKE_DIR="$PWD/curl-install/lib/cmake/CURL"
+
           echo "--- Installed curl cmake files ---"
           find curl-install -name "*.cmake" | sort
           echo "---------------------------------"
 
-      # ── 6. Configure the main project ────────────────────────────────────────
-      # CURL_DIR (uppercase) is the correct hint variable for CURLConfig.cmake.
-      # curl_DIR (lowercase) is silently ignored by CMake's find_package, which
-      # is why the previous run could not locate the config file even though it
-      # had been installed correctly.
+          # curlConfig.cmake  →  CURLConfig.cmake
+          ln -s "$CURL_CMAKE_DIR/CURLConfig.cmake" \
+                "$CURL_CMAKE_DIR/curlConfig.cmake"
+
+          # curlConfigVersion.cmake  →  CURLConfigVersion.cmake (if present)
+          if [ -f "$CURL_CMAKE_DIR/CURLConfigVersion.cmake" ]; then
+            ln -s "$CURL_CMAKE_DIR/CURLConfigVersion.cmake" \
+                  "$CURL_CMAKE_DIR/curlConfigVersion.cmake"
+          fi
+
+          echo "--- After symlinking ---"
+          ls -la "$CURL_CMAKE_DIR/"
+          echo "------------------------"
+
+      # ── 8. Configure the main project ────────────────────────────────────────
+      # curl_DIR (lowercase) matches find_package(curl ...) in CMakeLists.txt.
+      # It points at the directory now containing curlConfig.cmake.
       - name: Configure CMake
         env:
           NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -108,13 +118,13 @@ jobs:
             -DANDROID_PLATFORM_LEVEL=21 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_STANDARD=17 \
-            -DCURL_DIR="$PWD/curl-install/lib/cmake/CURL"
+            -Dcurl_DIR="$PWD/curl-install/lib/cmake/CURL"
 
-      # ── 7. Build ─────────────────────────────────────────────────────────────
+      # ── 9. Build ─────────────────────────────────────────────────────────────
       - name: Build
         run: cmake --build build --parallel
 
-      # ── 8. Upload ────────────────────────────────────────────────────────────
+      # ── 10. Upload ───────────────────────────────────────────────────────────
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
