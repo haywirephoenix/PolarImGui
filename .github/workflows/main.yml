@@ -25,16 +25,27 @@ jobs:
       - name: Install build tools
         run: sudo apt-get install -y ninja-build cmake
 
-      # ── 4. Dobby guard ───────────────────────────────────────────────────────
-      - name: Verify libdobby.a is present
+      # ── 4. Prebuilt lib guards ───────────────────────────────────────────────
+      - name: Verify prebuilt libs are present
         run: |
-          DOBBY_PATH="app/src/main/cpp/libs/arm64-v8a/libdobby.a"
-          if [ ! -f "$DOBBY_PATH" ]; then
-            echo "ERROR: $DOBBY_PATH not found."
-            echo "Commit the prebuilt libdobby.a to the repository at that path."
+          MISSING=0
+
+          check() {
+            if [ ! -f "$1" ]; then
+              echo "ERROR: $1 not found"
+              MISSING=1
+            else
+              echo "OK: $1"
+            fi
+          }
+
+          check "app/src/main/cpp/libs/arm64-v8a/libdobby.a"
+          check "app/src/main/cpp/libs/arm64-v8a/libBNM.a"
+
+          if [ $MISSING -ne 0 ]; then
+            echo "One or more prebuilt libs are missing. Commit them to the repo."
             exit 1
           fi
-          echo "libdobby.a found – OK"
 
       # ── 5. Download curl source ───────────────────────────────────────────────
       - name: Download curl source
@@ -73,10 +84,9 @@ jobs:
           cmake --install curl-build
 
       # ── 7. Configure the main project ────────────────────────────────────────
-      # CMakeLists.txt must use:
-      #   find_package(CURL REQUIRED CONFIG)
-      #   target_link_libraries(... CURL::libcurl)
-      # These match the target name curl's CMake build actually exports.
+      # BNM_INCLUDE and BNM_EXTERNAL_INCLUDE point CMake at the BNM headers
+      # you copied into the repo. Adjust the paths to match wherever you placed
+      # the include/ and external/include/ directories from the BNM repo.
       - name: Configure CMake
         env:
           NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -90,7 +100,9 @@ jobs:
             -DANDROID_PLATFORM_LEVEL=21 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_STANDARD=17 \
-            -DCURL_DIR="$PWD/curl-install/lib/cmake/CURL"
+            -DCURL_DIR="$PWD/curl-install/lib/cmake/CURL" \
+            -DBNM_INCLUDE="$PWD/app/src/main/cpp/ByNameModding/include" \
+            -DBNM_EXTERNAL_INCLUDE="$PWD/app/src/main/cpp/ByNameModding/external/include"
 
       # ── 8. Build ─────────────────────────────────────────────────────────────
       - name: Build
