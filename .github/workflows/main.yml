@@ -90,13 +90,18 @@ jobs:
         run: |
           git clone https://github.com/jmpews/Dobby.git --depth=1
 
-          # Fix macOS-style @PAGE/@PAGEOFF relocations to Linux-compatible equivalents
           ASM_FILE="Dobby/source/TrampolineBridge/ClosureTrampolineBridge/arm64/closure_bridge_arm64.asm"
-          sed -i 's/\(adrp.*\)@PAGE/\1/g' "$ASM_FILE"
-          sed -i 's/\(add.*\)@PAGEOFF/\1 \& 0xFFF/g' "$ASM_FILE"
-          # Simpler alternative - just replace the two problematic lines with an adr instruction
+
+          # Show original lines for debugging
+          echo "--- Before patch ---"
+          grep -n "common_closure_bridge_handler" "$ASM_FILE"
+
+          # Replace adrp+add pair with a single adr instruction
           sed -i 's/adrp x17, common_closure_bridge_handler@PAGE/adr x17, common_closure_bridge_handler/g' "$ASM_FILE"
           sed -i '/add x17, x17, common_closure_bridge_handler@PAGEOFF/d' "$ASM_FILE"
+
+          echo "--- After patch ---"
+          grep -n "common_closure_bridge_handler" "$ASM_FILE"
 
           cmake -G Ninja \
             -B dobby-build \
