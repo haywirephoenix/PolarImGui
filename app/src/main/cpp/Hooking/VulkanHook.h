@@ -742,6 +742,44 @@ namespace VulkanHook {
                 di.dli_sname ? di.dli_sname : "?");
         }
     }
+    static void PatchHwuiDirectly() {
+        // This address is stable across runs because libhwui.so and the
+        // VulkanDispatch struct it points into are both Zygote-inherited mappings.
+        // The slot at 0x7a72915fa0 holds a pointer to the loader's vkQueuePresentKHR
+        // dispatch stub. We replace it with our hook. 
+        
+        uintptr_t* slot = (uintptr_t*)0x7a72915fa0;
+        uintptr_t  current = *slot;
+        
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+            "PatchHwuiDirectly: slot=%p current=%p replacing with hook=%p",
+            slot, (void*)current, (void*)hook_vkQueuePresentKHR);
+        
+        uintptr_t page = (uintptr_t)slot & ~(uintptr_t)4095;
+        if (mprotect((void*)page, 4096, PROT_READ | PROT_WRITE) != 0) {
+            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "mprotect failed: %s", strerror(errno));
+            return;
+        }
+        
+        // Save the original so our hook can call through
+        orig_vkQueuePresentKHR = (PFN_vkQueuePresentKHR)current;
+        *slot = (uintptr_t)hook_vkQueuePresentKHR;
+        
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+            "PatchHwuiDirectly: patched! orig=%p", (void*)orig_vkQueuePresentKHR);
+
+        // Now dump neighbours to find CreateSwapchain and CreateDevice slots too
+        for (int i = -8; i <= 8; i++) {
+            uintptr_t* p = slot + i;
+            uintptr_t v = *p;
+            Dl_info di{};
+            dladdr((void*)v, &di);
+            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                "  slot[%+d] @ %p = %p  %s",
+                i, p, (void*)v,
+                di.dli_sname ? di.dli_sname : "?");
+        }
+    }
 
     // =========================================================================
     // InstallFull — called from background thread in JNI_OnLoad.
@@ -749,23 +787,50 @@ namespace VulkanHook {
     // render thread) to complete, then patches all cached dispatch tables.
     // =========================================================================
     static void InstallFull() {
-        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-    "orig ptrs: cd=%p cs=%p qp=%p  hooks: cd=%p cs=%p qp=%p",
-    (void*)orig_vkCreateDevice, (void*)orig_vkCreateSwapchainKHR, (void*)orig_vkQueuePresentKHR,
-    (void*)hook_vkCreateDevice, (void*)hook_vkCreateSwapchainKHR, (void*)hook_vkQueuePresentKHR);
-
         if (!g_VulkanLib) {
             __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "InstallFull: VulkanLib not set");
             return;
         }
-        IdentifyMysteryPointer();
 
-        // Wait for libhwui's render thread to finish its one-time Vulkan init.
-        // The std::call_once in VulkanManager::initialize fires shortly after
-        // the render thread starts — 500ms is conservative but safe.
+        // Wait for libhwui's render thread one-time Vulkan init to complete
         usleep(500000);
-        DiagnoseDispatchTables();
-        DiagnoseAndPatchHwui();
+
+        // The VulkanDispatch slot for vkQueuePresentKHR in libhwui is at a fixed
+        // Zygote-inherited address. We patch it directly.
+        uintptr_t* presentSlot = (uintptr_t*)0x7a72915fa0;
+        uintptr_t  currentPresent = *presentSlot;
+
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+            "InstallFull: presentSlot=%p current=%p",
+            presentSlot, (void*)currentPresent);
+
+        uintptr_t page = (uintptr_t)presentSlot & ~(uintptr_t)4095;
+        if (mprotect((void*)page, 4096, PROT_READ | PROT_WRITE) == 0) {
+            // Override the orig so our hook calls through the loader stub
+            // rather than the Dobby trampoline (more correct call path)
+            orig_vkQueuePresentKHR = (PFN_vkQueuePresentKHR)currentPresent;
+            *presentSlot = (uintptr_t)hook_vkQueuePresentKHR;
+            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                "InstallFull: vkQueuePresentKHR patched, orig=%p", (void*)orig_vkQueuePresentKHR);
+        } else {
+            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                "InstallFull: mprotect failed: %s", strerror(errno));
+        }
+
+        // Dump neighbours to identify CreateSwapchain + CreateDevice slots
+        // so we can patch those on the next run once we know their offsets
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "InstallFull: neighbour dump:");
+        for (int i = -8; i <= 8; i++) {
+            uintptr_t* p = presentSlot + i;
+            uintptr_t  v = *p;
+            Dl_info di{};
+            dladdr((void*)v, &di);
+            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                "  slot[%+d] @ %p = %p  %s",
+                i, p, (void*)v,
+                di.dli_sname ? di.dli_sname : "?");
+        }
+
         __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "InstallFull: complete");
     }
 
