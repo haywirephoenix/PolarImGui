@@ -83,7 +83,30 @@ jobs:
           cmake --build curl-build --parallel
           cmake --install curl-build
 
-      # ── 7. Configure the main project ────────────────────────────────────────
+      # ── 7. Build Dobby for arm64-v8a ──────────────────────────
+      - name: Build Dobby for arm64-v8a
+        env:
+          NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          git clone https://github.com/jmpews/Dobby.git --depth=1
+          cmake -G Ninja \
+            -B dobby-build \
+            -S Dobby \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-21 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDOBBY_DEBUG=OFF
+
+          cmake --build dobby-build --parallel
+
+          cp dobby-build/libdobby.a app/src/main/cpp/libs/arm64-v8a/libdobby.a
+
+          echo "--- Dobby symbols ---"
+          nm app/src/main/cpp/libs/arm64-v8a/libdobby.a | grep -E "T DobbyHook|T DobbyDestroy"
+          echo "---------------------"
+
+      # ── 8. Configure the main project ────────────────────────────────────────
       # BNM_INCLUDE and BNM_EXTERNAL_INCLUDE point CMake at the BNM headers
       # you copied into the repo. Adjust the paths to match wherever you placed
       # the include/ and external/include/ directories from the BNM repo.
@@ -104,11 +127,11 @@ jobs:
             -DBNM_INCLUDE="$PWD/app/src/main/cpp/ByNameModding/include" \
             -DBNM_EXTERNAL_INCLUDE="$PWD/app/src/main/cpp/ByNameModding/external/include"
 
-      # ── 8. Build ─────────────────────────────────────────────────────────────
+      # ── 9. Build ─────────────────────────────────────────────────────────────
       - name: Build
         run: cmake --build build --parallel
 
-      # ── 9. Upload ────────────────────────────────────────────────────────────
+      # ── 10. Upload ────────────────────────────────────────────────────────────
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
