@@ -1,5 +1,5 @@
 #pragma once
-#include "BNM/BNM.hpp"
+#include "ByNameModding/BNM.hpp"
 
 using namespace BNM::UNITY_STRUCTS;
 using namespace BNM::MONO_STRUCTS;

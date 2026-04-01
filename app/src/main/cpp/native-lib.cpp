@@ -21,7 +21,7 @@
 #include "Misc/JNIStuff.h"
 #include "Misc/FileWrapper.h"
 #include "Misc/Utils.h"
-#include "BNM/BNM.hpp"
+#include "ByNameModding/BNM.hpp"
 #include "Obfuscation/Custom_Obfuscate.h"
 #include "Unity/Unity.h"
 #include "Misc/FunctionPointers.h"
