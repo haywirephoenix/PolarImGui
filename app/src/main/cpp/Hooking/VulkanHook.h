@@ -551,12 +551,58 @@ namespace VulkanHook {
         __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "InstallEarly: direct hooks installed");
     }
 
+    static void DiagnoseDispatchTables() {
+        void* vk = g_VulkanLib;
+        void* realCreateDevice    = dlsym(vk, "vkCreateDevice");
+        void* realCreateSwapchain = dlsym(vk, "vkCreateSwapchainKHR");
+        void* realQueuePresent    = dlsym(vk, "vkQueuePresentKHR");
+
+        const char* libs[] = {"libhwui.so", "libunity.so", "libvulkan.so"};
+        
+        for (const char* libName : libs) {
+            FILE* maps = fopen("/proc/self/maps", "r");
+            if (!maps) continue;
+            char line[512];
+            while (fgets(line, sizeof(line), maps)) {
+                if (!strstr(line, libName)) continue;
+                if (!strstr(line, "rw-p"))  continue;
+                uintptr_t start = 0, end = 0;
+                sscanf(line, "%lx-%lx", &start, &end);
+                if (!start || end <= start + sizeof(uintptr_t)) continue;
+
+                uintptr_t* ptr  = (uintptr_t*)start;
+                uintptr_t* last = (uintptr_t*)(end - sizeof(uintptr_t));
+                while (ptr <= last) {
+                    uintptr_t v = *ptr;
+                    // Print anything that looks like a libvulkan address
+                    // (within ~1MB of our known symbols)
+                    uintptr_t base = (uintptr_t)realQueuePresent & ~(uintptr_t)0xFFFFF;
+                    if (v >= base && v < base + 0x100000) {
+                        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                            "  [%s rw @ %p] = %p  (cd=%d cs=%d qp=%d)",
+                            libName, ptr, (void*)v,
+                            v == (uintptr_t)realCreateDevice,
+                            v == (uintptr_t)realCreateSwapchain,
+                            v == (uintptr_t)realQueuePresent);
+                    }
+                    ptr++;
+                }
+            }
+            fclose(maps);
+        }
+    }
+
     // =========================================================================
     // InstallFull — called from background thread in JNI_OnLoad.
     // Waits briefly for libhwui's one-time Vulkan init (std::call_once on the
     // render thread) to complete, then patches all cached dispatch tables.
     // =========================================================================
     static void InstallFull() {
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+    "orig ptrs: cd=%p cs=%p qp=%p  hooks: cd=%p cs=%p qp=%p",
+    (void*)orig_vkCreateDevice, (void*)orig_vkCreateSwapchainKHR, (void*)orig_vkQueuePresentKHR,
+    (void*)hook_vkCreateDevice, (void*)hook_vkCreateSwapchainKHR, (void*)hook_vkQueuePresentKHR);
+
         if (!g_VulkanLib) {
             __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "InstallFull: VulkanLib not set");
             return;
@@ -566,7 +612,7 @@ namespace VulkanHook {
         // The std::call_once in VulkanManager::initialize fires shortly after
         // the render thread starts — 500ms is conservative but safe.
         usleep(500000);
-
+        DiagnoseDispatchTables();
         PatchAllDispatchTables();
         __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "InstallFull: complete");
     }
