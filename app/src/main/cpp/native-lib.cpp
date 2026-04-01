@@ -40,25 +40,36 @@ void OnBNMLoaded()
 
 bool emulator = true;
 
+// Install Vulkan hooks as early as possible — before Unity's render thread
+// gets a chance to call vkGetInstanceProcAddr and build its dispatch table.
+__attribute__((constructor))
+void lib_main()
+{
+    __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "lib_main called");
+    VulkanHook::InstallEarly();
+}
+
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
 {
     __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "JNI_OnLoad called!");
     JNIEnv *env;
     vm->GetEnv((void **) &env, JNI_VERSION_1_6);
 
+    // Install remaining hooks (direct symbol hooks + per-frame VK functions).
+    // InstallEarly() already covered GetInstanceProcAddr/GetDeviceProcAddr,
+    // but we finish the rest here once we have confirmed libvulkan.so is open.
     std::thread([](){
-    // Wait for Unity's render thread to load Vulkan
-    void* vk = nullptr;
-    for (int i = 0; i < 100 && !vk; i++) {
-        vk = dlopen("libvulkan.so", RTLD_NOLOAD | RTLD_NOW);
-        if (!vk) usleep(50000); // 50ms
-    }
-    if (vk) {
-        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "libvulkan.so found after wait, installing hooks");
-        VulkanHook::Install();
-    } else {
-        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "libvulkan.so never loaded");
-    }
+        void* vk = nullptr;
+        for (int i = 0; i < 200 && !vk; i++) {
+            vk = dlopen("libvulkan.so", RTLD_NOLOAD | RTLD_NOW);
+            if (!vk) usleep(50000); // 50ms
+        }
+        if (vk) {
+            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "libvulkan.so confirmed loaded, installing full hooks");
+            VulkanHook::InstallFull();
+        } else {
+            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "libvulkan.so never loaded");
+        }
     }).detach();
 
     BNM::Loading::AddOnLoadedEvent(OnBNMLoaded);
@@ -75,10 +86,4 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
     }
 
     return JNI_VERSION_1_6;
-}
-
-__attribute__((constructor))
-void lib_main()
-{
-    __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "lib_main called");
 }
