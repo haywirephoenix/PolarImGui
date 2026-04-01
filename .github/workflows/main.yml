@@ -79,41 +79,7 @@ jobs:
           cmake --build curl-build --parallel
           cmake --install curl-build
 
-      # ── 7. Build Dobby for arm64-v8a ─────────────────────────────────────────
-      - name: Build Dobby for arm64-v8a
-        env:
-          NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: |
-          git clone https://github.com/jmpews/Dobby.git --depth=1
-
-          echo "--- Before patch ---"
-          grep -n "common_closure_bridge_handler" Dobby/source/TrampolineBridge/ClosureTrampolineBridge/arm64/closure_bridge_arm64.asm
-
-          python3 scripts/patch_dobby.py
-
-          echo "--- After patch ---"
-          grep -n "common_closure_bridge_handler" Dobby/source/TrampolineBridge/ClosureTrampolineBridge/arm64/closure_bridge_arm64.asm
-
-          cmake -G Ninja \
-            -B dobby-build \
-            -S Dobby \
-            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-21 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DDOBBY_DEBUG=OFF \
-            -DPlugin.SymbolResolver=OFF \
-            -DPlugin.GlobalOffsetTableHook=OFF
-
-          cmake --build dobby-build --parallel
-
-          cp dobby-build/libdobby.a app/src/main/cpp/libs/arm64-v8a/libdobby.a
-
-          echo "--- Dobby symbols ---"
-          nm app/src/main/cpp/libs/arm64-v8a/libdobby.a | grep -E "T DobbyHook|T DobbyDestroy"
-          echo "---------------------"
-
-      # ── 8. Configure the main project ────────────────────────────────────────
+      # ── 7. Configure the main project ────────────────────────────────────────
       - name: Configure CMake
         env:
           NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -131,11 +97,11 @@ jobs:
             -DBNM_INCLUDE="$PWD/app/src/main/cpp/ByNameModding/include" \
             -DBNM_EXTERNAL_INCLUDE="$PWD/app/src/main/cpp/ByNameModding/external/include"
 
-      # ── 9. Build ─────────────────────────────────────────────────────────────
+      # ── 8. Build ─────────────────────────────────────────────────────────────
       - name: Build
         run: cmake --build build --parallel
 
-      # ── 10. Upload ───────────────────────────────────────────────────────────
+      # ── 9. Upload ───────────────────────────────────────────────────────────
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
