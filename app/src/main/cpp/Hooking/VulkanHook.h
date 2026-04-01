@@ -358,6 +358,33 @@ namespace VulkanHook {
         return orig_vkQueuePresentKHR(queue, &modifiedPresent);
     }
 
+    static PFN_vkGetDeviceProcAddr   orig_vkGetDeviceProcAddr   = nullptr;
+    static PFN_vkGetInstanceProcAddr orig_vkGetInstanceProcAddr = nullptr;
+
+    static PFN_vkVoidFunction hook_vkGetDeviceProcAddr(VkDevice device, const char* pName) {
+        if (strcmp(pName, "vkCreateSwapchainKHR") == 0) {
+            orig_vkCreateSwapchainKHR = (PFN_vkCreateSwapchainKHR)orig_vkGetDeviceProcAddr(device, pName);
+            return (PFN_vkVoidFunction)hook_vkCreateSwapchainKHR;
+        }
+        if (strcmp(pName, "vkQueuePresentKHR") == 0) {
+            orig_vkQueuePresentKHR = (PFN_vkQueuePresentKHR)orig_vkGetDeviceProcAddr(device, pName);
+            return (PFN_vkVoidFunction)hook_vkQueuePresentKHR;
+        }
+        return orig_vkGetDeviceProcAddr(device, pName);
+    }
+
+    static PFN_vkVoidFunction hook_vkGetInstanceProcAddr(VkInstance instance, const char* pName) {
+        if (strcmp(pName, "vkCreateDevice") == 0) {
+            orig_vkCreateDevice = (PFN_vkCreateDevice)orig_vkGetInstanceProcAddr(instance, pName);
+            return (PFN_vkVoidFunction)hook_vkCreateDevice;
+        }
+        if (strcmp(pName, "vkGetDeviceProcAddr") == 0) {
+            orig_vkGetDeviceProcAddr = (PFN_vkGetDeviceProcAddr)orig_vkGetInstanceProcAddr(instance, pName);
+            return (PFN_vkVoidFunction)hook_vkGetDeviceProcAddr;
+        }
+        return orig_vkGetInstanceProcAddr(instance, pName);
+    }
+
     static void Install() {
         void *vk = dlopen("libvulkan.so", RTLD_NOW | RTLD_GLOBAL);
         if (!vk) {
@@ -398,17 +425,27 @@ namespace VulkanHook {
 
         #undef LOAD_VK
 
-        auto createDevice    = dlsym(vk, "vkCreateDevice");
-        auto createSwapchain = dlsym(vk, "vkCreateSwapchainKHR");
-        auto queuePresent    = dlsym(vk, "vkQueuePresentKHR");
+        auto getInstanceProcAddr = dlsym(vk, "vkGetInstanceProcAddr");
+        auto getDeviceProcAddr   = dlsym(vk, "vkGetDeviceProcAddr");
 
-        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", 
-            "Hooking: createDevice=%p createSwapchain=%p queuePresent=%p",
-            createDevice, createSwapchain, queuePresent);
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+            "Hooking: getInstanceProcAddr=%p getDeviceProcAddr=%p",
+            getInstanceProcAddr, getDeviceProcAddr);
 
-        hook(createDevice,    (void*)hook_vkCreateDevice,       (void**)&orig_vkCreateDevice);
-        hook(createSwapchain, (void*)hook_vkCreateSwapchainKHR, (void**)&orig_vkCreateSwapchainKHR);
-        hook(queuePresent,    (void*)hook_vkQueuePresentKHR,    (void**)&orig_vkQueuePresentKHR);
+        hook(getInstanceProcAddr, (void*)hook_vkGetInstanceProcAddr, (void**)&orig_vkGetInstanceProcAddr);
+        hook(getDeviceProcAddr,   (void*)hook_vkGetDeviceProcAddr,   (void**)&orig_vkGetDeviceProcAddr);
+
+        // auto createDevice    = dlsym(vk, "vkCreateDevice");
+        // auto createSwapchain = dlsym(vk, "vkCreateSwapchainKHR");
+        // auto queuePresent    = dlsym(vk, "vkQueuePresentKHR");
+
+        // __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", 
+        //     "Hooking: createDevice=%p createSwapchain=%p queuePresent=%p",
+        //     createDevice, createSwapchain, queuePresent);
+
+        // hook(createDevice,    (void*)hook_vkCreateDevice,       (void**)&orig_vkCreateDevice);
+        // hook(createSwapchain, (void*)hook_vkCreateSwapchainKHR, (void**)&orig_vkCreateSwapchainKHR);
+        // hook(queuePresent,    (void*)hook_vkQueuePresentKHR,    (void**)&orig_vkQueuePresentKHR);
 
         __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "Vulkan hooks installed");
     }
