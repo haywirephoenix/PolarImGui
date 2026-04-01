@@ -74,5 +74,4 @@ target_link_libraries(
         -Wl,--no-whole-archive
         ${android}
         ${log-lib}
-        vulkan
         CURL::libcurl)
