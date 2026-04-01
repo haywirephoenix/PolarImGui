@@ -33,7 +33,6 @@
 void OnBNMLoaded()
 {
     __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "OnBNMLoaded called!");
-    VulkanHook::Install();
     Unity::Screen::Setup();
     Unity::Input::Setup();
     Pointers::LoadPointers();
@@ -46,6 +45,9 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
     __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "JNI_OnLoad called!");
     JNIEnv *env;
     vm->GetEnv((void **) &env, JNI_VERSION_1_6);
+
+    // Install Vulkan hooks before BNM so they're in place before Unity's render thread starts
+    VulkanHook::Install();
 
     BNM::Loading::AddOnLoadedEvent(OnBNMLoaded);
     bool bnmLoaded = BNM::Loading::TryLoadByJNI(env);
