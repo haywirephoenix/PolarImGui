@@ -71,8 +71,10 @@ endif (${ANDROID_PLATFORM_LEVEL} LESS 12)
 target_link_libraries(
         native-lib
         ${LZ_LIB}
+        -Wl,--whole-archive
         ${DOBBY_LIB}
         ${BNM_LIB}
+        -Wl,--no-whole-archive
         ${OPENGL_LIB}
         ${GLESV2_LIB}
         ${android}
