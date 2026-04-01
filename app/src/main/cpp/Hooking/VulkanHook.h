@@ -4,6 +4,7 @@
 #include <android/log.h>
 #include <vector>
 #include <string.h>
+#include <sys/mman.h>
 #include "../ImGui/imgui.h"
 #include "../ImGui/imgui_impl_android.h"
 #include "../ImGui/imgui_impl_vulkan.h"
@@ -17,8 +18,8 @@ extern unsigned char Roboto_Regular[];
 namespace VulkanHook {
 
     // =========================================================================
-    // dlsym'd Vulkan function pointers (used for our own Vulkan calls so we
-    // always bypass any dispatch table Unity may have patched).
+    // dlsym'd Vulkan helpers — we call these directly, bypassing any dispatch
+    // table Unity or libhwui may have built.
     // =========================================================================
     static void* g_VulkanLib = nullptr;
 
@@ -64,9 +65,9 @@ namespace VulkanHook {
     static VkSwapchainKHR   g_Swapchain       = VK_NULL_HANDLE;
     static uint32_t         g_ImageCount      = 0;
     static VkExtent2D       g_SwapchainExtent = {};
-    static bool             g_ImGuiInitialized  = false;
-    static bool             g_SwapchainReady    = false;
-    static bool             g_DeviceCaptured    = false;
+    static bool             g_ImGuiInitialized = false;
+    static bool             g_SwapchainReady   = false;
+    static bool             g_DeviceCaptured   = false;
 
     // =========================================================================
     // Per-frame resources
@@ -82,23 +83,95 @@ namespace VulkanHook {
     static std::vector<VkImage>   g_SwapchainImages;
 
     // =========================================================================
-    // Original / trampoline function pointers
-    // Declared all together at the top so every hook below can reference them.
+    // Original / trampoline pointers — all declared up front so every hook
+    // function below can reference them without ordering issues.
     // =========================================================================
-    static PFN_vkGetInstanceProcAddr orig_vkGetInstanceProcAddr = nullptr;
-    static PFN_vkGetDeviceProcAddr   orig_vkGetDeviceProcAddr   = nullptr;
-    static PFN_vkCreateDevice        orig_vkCreateDevice        = nullptr;
-    static PFN_vkCreateSwapchainKHR  orig_vkCreateSwapchainKHR  = nullptr;
-    static PFN_vkQueuePresentKHR     orig_vkQueuePresentKHR     = nullptr;
+    static PFN_vkCreateDevice       orig_vkCreateDevice       = nullptr;
+    static PFN_vkCreateSwapchainKHR orig_vkCreateSwapchainKHR = nullptr;
+    static PFN_vkQueuePresentKHR    orig_vkQueuePresentKHR    = nullptr;
 
     // =========================================================================
-    // Forward declarations so hooks can reference each other freely
+    // Forward declarations
     // =========================================================================
-    static PFN_vkVoidFunction hook_vkGetInstanceProcAddr(VkInstance instance, const char* pName);
-    static PFN_vkVoidFunction hook_vkGetDeviceProcAddr(VkDevice device, const char* pName);
-    static VkResult           hook_vkCreateDevice(VkPhysicalDevice, const VkDeviceCreateInfo*, const VkAllocationCallbacks*, VkDevice*);
-    static VkResult           hook_vkCreateSwapchainKHR(VkDevice, const VkSwapchainCreateInfoKHR*, const VkAllocationCallbacks*, VkSwapchainKHR*);
-    static VkResult           hook_vkQueuePresentKHR(VkQueue, const VkPresentInfoKHR*);
+    static VkResult hook_vkCreateDevice(VkPhysicalDevice, const VkDeviceCreateInfo*, const VkAllocationCallbacks*, VkDevice*);
+    static VkResult hook_vkCreateSwapchainKHR(VkDevice, const VkSwapchainCreateInfoKHR*, const VkAllocationCallbacks*, VkSwapchainKHR*);
+    static VkResult hook_vkQueuePresentKHR(VkQueue, const VkPresentInfoKHR*);
+
+    // =========================================================================
+    // PatchPointersInLib
+    // Scans the rw- (data) segments of a named library and replaces every
+    // occurrence of realFn with hookFn. This is how we intercept Vulkan calls
+    // from libraries (libhwui, libunity) that cached function pointers before
+    // our Dobby hooks were installed.
+    // =========================================================================
+    static int PatchPointersInLib(const char* libName,
+                                  void* realFn, void* hookFn,
+                                  const char* fnName)
+    {
+        if (!realFn || !hookFn) return 0;
+
+        FILE* maps = fopen("/proc/self/maps", "r");
+        if (!maps) return 0;
+
+        int patched = 0;
+        char line[512];
+        while (fgets(line, sizeof(line), maps)) {
+            if (!strstr(line, libName))  continue;
+            if (!strstr(line, "rw-p"))   continue;   // data segments only, never rx code
+
+            uintptr_t start = 0, end = 0;
+            sscanf(line, "%lx-%lx", &start, &end);
+            if (!start || end <= start + sizeof(uintptr_t)) continue;
+
+            uintptr_t* ptr  = reinterpret_cast<uintptr_t*>(start);
+            uintptr_t* last = reinterpret_cast<uintptr_t*>(end - sizeof(uintptr_t));
+
+            while (ptr <= last) {
+                if (*ptr == reinterpret_cast<uintptr_t>(realFn)) {
+                    uintptr_t pageStart = reinterpret_cast<uintptr_t>(ptr) & ~(uintptr_t)(4095);
+                    mprotect(reinterpret_cast<void*>(pageStart), 4096, PROT_READ | PROT_WRITE);
+                    *ptr = reinterpret_cast<uintptr_t>(hookFn);
+                    __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                        "Patched %s in %s @ %p", fnName, libName, ptr);
+                    patched++;
+                }
+                ptr++;
+            }
+        }
+        fclose(maps);
+        return patched;
+    }
+
+    // Patch all three hooks into every cached dispatch table we can find.
+    static void PatchAllDispatchTables() {
+        void* vk = g_VulkanLib;
+
+        // These are the addresses that libhwui / libunity cached when they
+        // called vkGetInstanceProcAddr / vkGetDeviceProcAddr at startup.
+        void* realCreateDevice    = dlsym(vk, "vkCreateDevice");
+        void* realCreateSwapchain = dlsym(vk, "vkCreateSwapchainKHR");
+        void* realQueuePresent    = dlsym(vk, "vkQueuePresentKHR");
+
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+            "PatchAllDispatchTables: cd=%p cs=%p qp=%p",
+            realCreateDevice, realCreateSwapchain, realQueuePresent);
+
+        int n = 0;
+
+        // libhwui owns the Vulkan context on Android 10+ when Unity uses the
+        // system Vulkan surface (which it does on Android 16).
+        n += PatchPointersInLib("libhwui.so",  realCreateDevice,    (void*)hook_vkCreateDevice,       "vkCreateDevice");
+        n += PatchPointersInLib("libhwui.so",  realCreateSwapchain, (void*)hook_vkCreateSwapchainKHR, "vkCreateSwapchainKHR");
+        n += PatchPointersInLib("libhwui.so",  realQueuePresent,    (void*)hook_vkQueuePresentKHR,    "vkQueuePresentKHR");
+
+        // libunity may have its own copies too.
+        n += PatchPointersInLib("libunity.so", realCreateDevice,    (void*)hook_vkCreateDevice,       "vkCreateDevice");
+        n += PatchPointersInLib("libunity.so", realCreateSwapchain, (void*)hook_vkCreateSwapchainKHR, "vkCreateSwapchainKHR");
+        n += PatchPointersInLib("libunity.so", realQueuePresent,    (void*)hook_vkQueuePresentKHR,    "vkQueuePresentKHR");
+
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+            "PatchAllDispatchTables: %d pointers patched", n);
+    }
 
     // =========================================================================
     // Cleanup
@@ -108,12 +181,12 @@ namespace VulkanHook {
         _vkDeviceWaitIdle(g_Device);
 
         for (auto& f : g_Frames) {
-            if (f.framebuffer  && g_Device) _vkDestroyFramebuffer(g_Device, f.framebuffer, nullptr);
-            if (f.imageView    && g_Device) _vkDestroyImageView(g_Device, f.imageView, nullptr);
+            if (f.framebuffer)  _vkDestroyFramebuffer(g_Device, f.framebuffer, nullptr);
+            if (f.imageView)    _vkDestroyImageView(g_Device, f.imageView, nullptr);
             if (f.commandBuffer && g_CommandPool)
                 _vkFreeCommandBuffers(g_Device, g_CommandPool, 1, &f.commandBuffer);
-            if (f.fence        && g_Device) _vkDestroyFence(g_Device, f.fence, nullptr);
-            if (f.semaphore    && g_Device) _vkDestroySemaphore(g_Device, f.semaphore, nullptr);
+            if (f.fence)        _vkDestroyFence(g_Device, f.fence, nullptr);
+            if (f.semaphore)    _vkDestroySemaphore(g_Device, f.semaphore, nullptr);
         }
         g_Frames.clear();
 
@@ -125,26 +198,24 @@ namespace VulkanHook {
     }
 
     // =========================================================================
-    // Swapchain + ImGui backend setup
+    // SetupSwapchainResources
     // =========================================================================
     static bool SetupSwapchainResources(VkSwapchainKHR swapchain, VkFormat format, VkExtent2D extent) {
         if (!g_DeviceCaptured || g_Device == VK_NULL_HANDLE) {
-            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "SetupSwapchainResources: device not captured yet, skipping");
+            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                "SetupSwapchainResources: device not captured yet");
             return false;
         }
 
         CleanupFrameData();
-
         g_Swapchain       = swapchain;
         g_SwapchainExtent = extent;
 
-        // --- Swapchain images ---
         _vkGetSwapchainImagesKHR(g_Device, swapchain, &g_ImageCount, nullptr);
         g_SwapchainImages.resize(g_ImageCount);
         _vkGetSwapchainImagesKHR(g_Device, swapchain, &g_ImageCount, g_SwapchainImages.data());
 
-        // --- Render pass ---
-        // loadOp = LOAD so we composite on top of the game frame.
+        // Render pass — LOAD so we composite on top of the game frame
         VkAttachmentDescription attachment{};
         attachment.format         = format;
         attachment.samples        = VK_SAMPLE_COUNT_1_BIT;
@@ -183,7 +254,6 @@ namespace VulkanHook {
             return false;
         }
 
-        // --- Descriptor pool ---
         VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000};
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         poolInfo.flags         = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
@@ -195,7 +265,6 @@ namespace VulkanHook {
             return false;
         }
 
-        // --- Command pool ---
         VkCommandPoolCreateInfo cpInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
         cpInfo.flags            = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
         cpInfo.queueFamilyIndex = g_QueueFamily;
@@ -204,7 +273,6 @@ namespace VulkanHook {
             return false;
         }
 
-        // --- Per-frame resources ---
         g_Frames.resize(g_ImageCount);
 
         VkCommandBufferAllocateInfo cbInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
@@ -213,7 +281,7 @@ namespace VulkanHook {
         cbInfo.commandBufferCount = 1;
 
         VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-        fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;  // start signalled so first WaitForFences returns immediately
+        fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
         VkSemaphoreCreateInfo semInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
 
@@ -226,7 +294,7 @@ namespace VulkanHook {
             ivInfo.format           = format;
             ivInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
             if (_vkCreateImageView(g_Device, &ivInfo, nullptr, &f.imageView) != VK_SUCCESS) {
-                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkCreateImageView failed for frame %d", i);
+                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkCreateImageView failed frame %d", i);
                 return false;
             }
 
@@ -238,7 +306,7 @@ namespace VulkanHook {
             fbInfo.height          = extent.height;
             fbInfo.layers          = 1;
             if (_vkCreateFramebuffer(g_Device, &fbInfo, nullptr, &f.framebuffer) != VK_SUCCESS) {
-                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkCreateFramebuffer failed for frame %d", i);
+                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkCreateFramebuffer failed frame %d", i);
                 return false;
             }
 
@@ -247,9 +315,6 @@ namespace VulkanHook {
             _vkCreateSemaphore(g_Device, &semInfo, nullptr, &f.semaphore);
         }
 
-        // --- ImGui Vulkan backend ---
-        // Feed our dlsym'd pointers into the ImGui backend so it doesn't go
-        // through Unity's (potentially patched) dispatch table.
         ImGui_ImplVulkan_LoadFunctions([](const char* name, void* userdata) -> PFN_vkVoidFunction {
             return (PFN_vkVoidFunction)dlsym(userdata, name);
         }, g_VulkanLib);
@@ -271,58 +336,19 @@ namespace VulkanHook {
 
         g_SwapchainReady = true;
         __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-            "Vulkan ImGui initialized: %d images, %dx%d",
-            g_ImageCount, extent.width, extent.height);
+            "Vulkan ImGui ready: %d images %dx%d fmt=%d",
+            g_ImageCount, extent.width, extent.height, (int)format);
         return true;
     }
 
     // =========================================================================
-    // Hook: vkGetInstanceProcAddr
-    // Intercepts Unity building its instance-level dispatch table.
-    // vkCreateDevice and vkGetDeviceProcAddr are instance-level lookups.
-    // =========================================================================
-    static PFN_vkVoidFunction hook_vkGetInstanceProcAddr(VkInstance instance, const char* pName) {
-        if (!pName) return orig_vkGetInstanceProcAddr(instance, pName);
-
-        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkGetInstanceProcAddr: %s", pName);
-
-        if (strcmp(pName, "vkGetInstanceProcAddr") == 0) return (PFN_vkVoidFunction)hook_vkGetInstanceProcAddr;
-        if (strcmp(pName, "vkGetDeviceProcAddr")   == 0) return (PFN_vkVoidFunction)hook_vkGetDeviceProcAddr;
-        if (strcmp(pName, "vkCreateDevice")        == 0) return (PFN_vkVoidFunction)hook_vkCreateDevice;
-        if (strcmp(pName, "vkCreateSwapchainKHR")  == 0) return (PFN_vkVoidFunction)hook_vkCreateSwapchainKHR;
-        if (strcmp(pName, "vkQueuePresentKHR")     == 0) return (PFN_vkVoidFunction)hook_vkQueuePresentKHR;
-
-        return orig_vkGetInstanceProcAddr(instance, pName);
-    }
-
-    // =========================================================================
-    // Hook: vkGetDeviceProcAddr
-    // Intercepts Unity building its device-level dispatch table.
-    // NOTE: vkCreateDevice is instance-level; do NOT intercept it here or
-    //       most drivers will return nullptr and crash Unity.
-    // =========================================================================
-    static PFN_vkVoidFunction hook_vkGetDeviceProcAddr(VkDevice device, const char* pName) {
-        if (!pName) return orig_vkGetDeviceProcAddr(device, pName);
-
-        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkGetDeviceProcAddr: %s", pName);
-
-        if (strcmp(pName, "vkGetDeviceProcAddr")  == 0) return (PFN_vkVoidFunction)hook_vkGetDeviceProcAddr;
-        if (strcmp(pName, "vkCreateSwapchainKHR") == 0) return (PFN_vkVoidFunction)hook_vkCreateSwapchainKHR;
-        if (strcmp(pName, "vkQueuePresentKHR")    == 0) return (PFN_vkVoidFunction)hook_vkQueuePresentKHR;
-
-        return orig_vkGetDeviceProcAddr(device, pName);
-    }
-
-    // =========================================================================
     // Hook: vkCreateDevice
-    // Captures the VkDevice, physical device, queue family, and queue.
-    // Also initialises the ImGui context (once).
     // =========================================================================
     static VkResult hook_vkCreateDevice(
-        VkPhysicalDevice              physicalDevice,
-        const VkDeviceCreateInfo*     pCreateInfo,
-        const VkAllocationCallbacks*  pAllocator,
-        VkDevice*                     pDevice)
+        VkPhysicalDevice             physicalDevice,
+        const VkDeviceCreateInfo*    pCreateInfo,
+        const VkAllocationCallbacks* pAllocator,
+        VkDevice*                    pDevice)
     {
         __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkCreateDevice fired!");
 
@@ -335,7 +361,6 @@ namespace VulkanHook {
         g_PhysicalDevice = physicalDevice;
         g_Device         = *pDevice;
 
-        // Find graphics queue family
         uint32_t count = 0;
         _vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &count, nullptr);
         std::vector<VkQueueFamilyProperties> props(count);
@@ -347,11 +372,8 @@ namespace VulkanHook {
             }
         }
         _vkGetDeviceQueue(*pDevice, g_QueueFamily, 0, &g_Queue);
-
         g_DeviceCaptured = true;
 
-        // Initialise the ImGui context once (no Vulkan backend yet — that
-        // happens in SetupSwapchainResources after vkCreateSwapchainKHR).
         if (!g_ImGuiInitialized) {
             ImGui::CreateContext();
             ImGuiIO& io = ImGui::GetIO();
@@ -363,15 +385,12 @@ namespace VulkanHook {
         }
 
         __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-            "vkCreateDevice hooked — device=%p queueFamily=%d queue=%p",
-            (void*)g_Device, g_QueueFamily, (void*)g_Queue);
-
+            "vkCreateDevice: device=%p queueFamily=%d", (void*)*pDevice, g_QueueFamily);
         return VK_SUCCESS;
     }
 
     // =========================================================================
     // Hook: vkCreateSwapchainKHR
-    // Sets up per-frame resources and initialises the ImGui Vulkan backend.
     // =========================================================================
     static VkResult hook_vkCreateSwapchainKHR(
         VkDevice                        device,
@@ -381,17 +400,6 @@ namespace VulkanHook {
     {
         __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkCreateSwapchainKHR fired!");
 
-        // Lazily resolve the real pointer via the device proc addr chain if
-        // our direct-symbol hook trampoline is somehow nullptr.
-        if (!orig_vkCreateSwapchainKHR) {
-            orig_vkCreateSwapchainKHR = (PFN_vkCreateSwapchainKHR)
-                orig_vkGetDeviceProcAddr(device, "vkCreateSwapchainKHR");
-            if (!orig_vkCreateSwapchainKHR) {
-                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "Could not resolve vkCreateSwapchainKHR, aborting");
-                return VK_ERROR_INITIALIZATION_FAILED;
-            }
-        }
-
         VkResult result = orig_vkCreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
         if (result != VK_SUCCESS) {
             __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkCreateSwapchainKHR failed: %d", result);
@@ -400,9 +408,8 @@ namespace VulkanHook {
 
         __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
             "vkCreateSwapchainKHR: %dx%d fmt=%d",
-            pCreateInfo->imageExtent.width,
-            pCreateInfo->imageExtent.height,
-            pCreateInfo->imageFormat);
+            pCreateInfo->imageExtent.width, pCreateInfo->imageExtent.height,
+            (int)pCreateInfo->imageFormat);
 
         SetupSwapchainResources(*pSwapchain, pCreateInfo->imageFormat, pCreateInfo->imageExtent);
         return VK_SUCCESS;
@@ -410,7 +417,6 @@ namespace VulkanHook {
 
     // =========================================================================
     // Hook: vkQueuePresentKHR
-    // Renders ImGui on top of each swapchain image before it is presented.
     // =========================================================================
     static VkResult hook_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* pPresentInfo) {
         static bool logged = false;
@@ -419,47 +425,15 @@ namespace VulkanHook {
             logged = true;
         }
 
-        // Lazily resolve the real pointer if necessary.
-        if (!orig_vkQueuePresentKHR) {
-            if (!g_DeviceCaptured) {
-                // Can't resolve without a device — just pass through.
-                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkQueuePresentKHR: device not captured yet, passing through");
-                // We don't have orig yet either — this path should only hit if
-                // our direct symbol hook fired but the proc addr path hasn't.
-                // Nothing we can do safely; return an error to surface the issue.
-                return VK_ERROR_DEVICE_LOST;
-            }
-            orig_vkQueuePresentKHR = (PFN_vkQueuePresentKHR)
-                orig_vkGetDeviceProcAddr(g_Device, "vkQueuePresentKHR");
-        }
-
-        if (!g_DeviceCaptured) {
-            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkQueuePresentKHR: device not captured");
+        if (!g_DeviceCaptured || !g_SwapchainReady || g_Frames.empty())
             return orig_vkQueuePresentKHR(queue, pPresentInfo);
-        }
-
-        if (!g_SwapchainReady || g_Frames.empty()) {
-            return orig_vkQueuePresentKHR(queue, pPresentInfo);
-        }
-
-        // Sanity check: warn if the present queue differs from the captured queue.
-        // This is legal in Vulkan but means we must submit on the correct queue.
-        if (queue != g_Queue) {
-            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-                "WARNING: present queue %p != captured queue %p, using present queue",
-                (void*)queue, (void*)g_Queue);
-        }
 
         std::vector<VkSemaphore> signalSems;
         signalSems.reserve(pPresentInfo->swapchainCount);
 
         for (uint32_t s = 0; s < pPresentInfo->swapchainCount; s++) {
             uint32_t imageIndex = pPresentInfo->pImageIndices[s];
-            if (imageIndex >= g_Frames.size()) {
-                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-                    "imageIndex %d out of range (frames=%zu)", imageIndex, g_Frames.size());
-                continue;
-            }
+            if (imageIndex >= g_Frames.size()) continue;
 
             auto& f = g_Frames[imageIndex];
 
@@ -475,10 +449,8 @@ namespace VulkanHook {
             rpBegin.renderPass        = g_RenderPass;
             rpBegin.framebuffer       = f.framebuffer;
             rpBegin.renderArea.extent = g_SwapchainExtent;
-            // clearValueCount intentionally 0 — loadOp=LOAD, we don't clear
             _vkCmdBeginRenderPass(f.commandBuffer, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
 
-            // ImGui frame
             ImGui_ImplVulkan_NewFrame();
             ImGui_ImplAndroid_NewFrame(g_SwapchainExtent.width, g_SwapchainExtent.height);
             ImGui::NewFrame();
@@ -489,10 +461,9 @@ namespace VulkanHook {
             _vkCmdEndRenderPass(f.commandBuffer);
             _vkEndCommandBuffer(f.commandBuffer);
 
-            // Wait on whatever semaphores the game signalled, then signal
-            // our own semaphore so the present knows rendering is done.
             VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
             VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+            // Only consume the game's wait semaphores on the first swapchain entry
             submit.waitSemaphoreCount   = (s == 0) ? pPresentInfo->waitSemaphoreCount : 0;
             submit.pWaitSemaphores      = (s == 0) ? pPresentInfo->pWaitSemaphores    : nullptr;
             submit.pWaitDstStageMask    = &waitStage;
@@ -500,16 +471,11 @@ namespace VulkanHook {
             submit.pCommandBuffers      = &f.commandBuffer;
             submit.signalSemaphoreCount = 1;
             submit.pSignalSemaphores    = &f.semaphore;
-
-            // Use the queue that was passed in to this present call — it is
-            // the queue Unity actually uses and may differ from g_Queue.
             _vkQueueSubmit(queue, 1, &submit, f.fence);
 
             signalSems.push_back(f.semaphore);
         }
 
-        // Replace the wait semaphores with our own signal semaphores so the
-        // driver waits for our ImGui draw before flipping.
         VkPresentInfoKHR modifiedPresent = *pPresentInfo;
         if (!signalSems.empty()) {
             modifiedPresent.waitSemaphoreCount = (uint32_t)signalSems.size();
@@ -521,8 +487,15 @@ namespace VulkanHook {
 
     // =========================================================================
     // InstallEarly — called from __attribute__((constructor)) in native-lib.cpp
-    // Hooks vkGetInstanceProcAddr and vkGetDeviceProcAddr as early as possible
-    // so we intercept Unity's dispatch table construction.
+    //
+    // IMPORTANT: Do NOT hook vkGetInstanceProcAddr or vkGetDeviceProcAddr here.
+    // On Android 16, libvulkan.so's internal dispatch stubs are protected by
+    // PAC (Pointer Authentication). Dobby cannot safely patch their prologues
+    // and will cause a SIGILL (ILL_ILLOPC) crash on the render thread.
+    //
+    // Instead we hook only the three exported target symbols, then in
+    // InstallFull we walk the data segments of libhwui and libunity to patch
+    // any cached copies of those pointers that were stored before our hooks.
     // =========================================================================
     static void InstallEarly() {
         void* vk = dlopen("libvulkan.so", RTLD_NOW | RTLD_GLOBAL);
@@ -532,40 +505,8 @@ namespace VulkanHook {
         }
         g_VulkanLib = vk;
 
-        void* fnGetInstanceProcAddr = dlsym(vk, "vkGetInstanceProcAddr");
-        void* fnGetDeviceProcAddr   = dlsym(vk, "vkGetDeviceProcAddr");
-
-        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-            "InstallEarly: GetInstanceProcAddr=%p GetDeviceProcAddr=%p",
-            fnGetInstanceProcAddr, fnGetDeviceProcAddr);
-
-        hook(fnGetInstanceProcAddr, (void*)hook_vkGetInstanceProcAddr, (void**)&orig_vkGetInstanceProcAddr);
-        hook(fnGetDeviceProcAddr,   (void*)hook_vkGetDeviceProcAddr,   (void**)&orig_vkGetDeviceProcAddr);
-
-        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "InstallEarly: proc addr hooks installed");
-    }
-
-    // =========================================================================
-    // InstallFull — called from the background thread in JNI_OnLoad once
-    // libvulkan.so is confirmed loaded.
-    // Loads all helper VK function pointers and installs the direct-symbol
-    // hooks as a fallback in case the proc addr hooks missed anything.
-    // =========================================================================
-    static void InstallFull() {
-        void* vk = g_VulkanLib;
-        if (!vk) {
-            vk = dlopen("libvulkan.so", RTLD_NOW | RTLD_GLOBAL);
-            if (!vk) {
-                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "InstallFull: libvulkan.so not found");
-                return;
-            }
-            g_VulkanLib = vk;
-        }
-
-        // Load every VK function we call ourselves so we're not reliant on
-        // Unity's dispatch table.
         #define LOAD_VK(fn) _ ## fn = (PFN_ ## fn)dlsym(vk, #fn); \
-            if (!_ ## fn) __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "LOAD_VK: " #fn " not found!")
+            if (!_ ## fn) __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "LOAD_VK missing: " #fn)
         LOAD_VK(vkGetPhysicalDeviceQueueFamilyProperties);
         LOAD_VK(vkGetDeviceQueue);
         LOAD_VK(vkDeviceWaitIdle);
@@ -596,26 +537,38 @@ namespace VulkanHook {
         LOAD_VK(vkDestroyDescriptorPool);
         #undef LOAD_VK
 
-        // Direct symbol hooks — belt-and-braces fallback.
-        // If Unity called vkGetInstanceProcAddr before our early hook fired
-        // (very unlikely given constructor timing) these catch it anyway.
         void* createDevice    = dlsym(vk, "vkCreateDevice");
         void* createSwapchain = dlsym(vk, "vkCreateSwapchainKHR");
         void* queuePresent    = dlsym(vk, "vkQueuePresentKHR");
 
         __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-            "InstallFull: createDevice=%p createSwapchain=%p queuePresent=%p",
-            createDevice, createSwapchain, queuePresent);
+            "InstallEarly: cd=%p cs=%p qp=%p", createDevice, createSwapchain, queuePresent);
 
-        // Only install these if the early hooks didn't already capture them.
-        if (!orig_vkCreateDevice)
-            hook(createDevice,    (void*)hook_vkCreateDevice,       (void**)&orig_vkCreateDevice);
-        if (!orig_vkCreateSwapchainKHR)
-            hook(createSwapchain, (void*)hook_vkCreateSwapchainKHR, (void**)&orig_vkCreateSwapchainKHR);
-        if (!orig_vkQueuePresentKHR)
-            hook(queuePresent,    (void*)hook_vkQueuePresentKHR,    (void**)&orig_vkQueuePresentKHR);
+        hook(createDevice,    (void*)hook_vkCreateDevice,       (void**)&orig_vkCreateDevice);
+        hook(createSwapchain, (void*)hook_vkCreateSwapchainKHR, (void**)&orig_vkCreateSwapchainKHR);
+        hook(queuePresent,    (void*)hook_vkQueuePresentKHR,    (void**)&orig_vkQueuePresentKHR);
 
-        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "InstallFull: all Vulkan hooks installed");
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "InstallEarly: direct hooks installed");
+    }
+
+    // =========================================================================
+    // InstallFull — called from background thread in JNI_OnLoad.
+    // Waits briefly for libhwui's one-time Vulkan init (std::call_once on the
+    // render thread) to complete, then patches all cached dispatch tables.
+    // =========================================================================
+    static void InstallFull() {
+        if (!g_VulkanLib) {
+            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "InstallFull: VulkanLib not set");
+            return;
+        }
+
+        // Wait for libhwui's render thread to finish its one-time Vulkan init.
+        // The std::call_once in VulkanManager::initialize fires shortly after
+        // the render thread starts — 500ms is conservative but safe.
+        usleep(500000);
+
+        PatchAllDispatchTables();
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "InstallFull: complete");
     }
 
 } // namespace VulkanHook
