@@ -76,11 +76,11 @@ target_link_libraries(
         ${LZ_LIB}
         -Wl,--whole-archive
         ${BNM_LIB}
+        ${DOBBY_LIB}
         -Wl,--no-whole-archive
         ${OPENGL_LIB}
         ${GLESV2_LIB}
         ${android}
         ${egl}
         ${log-lib}
-        CURL::libcurl
-        ${DOBBY_LIB})
+        CURL::libcurl)
