@@ -35,14 +35,18 @@
 
 EGLBoolean (*old_eglSwapBuffers)(...);
 EGLBoolean new_eglSwapBuffers(EGLDisplay _display, EGLSurface _surface) {
+    static bool logged = false;
+    if (!logged) {
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "eglSwapBuffers hooked!");
+        logged = true;
+    }
     SetupImGui();
     Menu::DrawImGui();
-
     return old_eglSwapBuffers(_display, _surface);
 }
 void OnBNMLoaded()
 {
-    LOGI("OnBNMLoaded called!");
+    __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "OnBNMLoaded called!");
     Unity::Screen::Setup();
     Unity::Input::Setup();
     Pointers::LoadPointers();
