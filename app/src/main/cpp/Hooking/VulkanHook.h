@@ -831,86 +831,166 @@ namespace VulkanHook {
     // render thread) to complete, then patches all cached dispatch tables.
     // =========================================================================
     static void InstallFull() {
-        if (!g_VulkanLib) return;
-
-        // Find the vendor Vulkan driver and hook its vkQueuePresentKHR directly
-        // Unity likely bypasses libvulkan.so entirely and talks to the ICD directly.
-        
-        const char* icdNames[] = {
-            "vulkan.adreno.so",
-            "libvulkan_adreno.so", 
-            "vulkan.msm8998.so",
-            "vulkan.msm.so",
-            nullptr
-        };
-
-        // Find which ICD is loaded
-        FILE* maps = fopen("/proc/self/maps", "r");
-        char line[512];
-        char icdPath[256] = {};
-        while (fgets(line, sizeof(line), maps)) {
-            if (!strstr(line, "r-xp") && !strstr(line, "r--p")) continue;
-            // Adreno ICD paths on OnePlus/Qualcomm
-            if (strstr(line, "vulkan") || strstr(line, "adreno") || 
-                strstr(line, "Adreno") || strstr(line, "GLES")) {
-                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "Possible ICD: %s", line);
-            }
+        if (!g_VulkanLib) {
+            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "InstallFull: VulkanLib not set");
+            return;
         }
-        fclose(maps);
 
-        // Also dump ALL loaded libraries that aren't standard system libs
-        // to find where Unity's Vulkan calls actually go
-        maps = fopen("/proc/self/maps", "r");
-        while (fgets(line, sizeof(line), maps)) {
-            if (!strstr(line, "r-xp")) continue;
-            // Skip known system paths
-            if (strstr(line, "/system/lib64/lib") && 
-                !strstr(line, "vulkan") && 
-                !strstr(line, "adreno")) continue;
-            if (strstr(line, "/apex/")) continue;
-            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "Exec segment: %s", line);
-        }
-        fclose(maps);
+        // The loader's internal present stub (stable Zygote address)
+        uintptr_t loaderPresent    = 0x7a76fd20f0;
+        uintptr_t exportedPresent    = (uintptr_t)dlsym(g_VulkanLib, "vkQueuePresentKHR");
+        uintptr_t exportedSwapchain  = (uintptr_t)dlsym(g_VulkanLib, "vkCreateSwapchainKHR");
+        uintptr_t exportedDevice     = (uintptr_t)dlsym(g_VulkanLib, "vkCreateDevice");
 
-        // Hook vkQueuePresentKHR on every loaded library that exports it
-        const char* libsToTry[] = {
-            "libvulkan.so",
-            "vulkan.adreno.so", 
-            "libq3dtools_adreno.so",
-            nullptr
-        };
-
-        for (int i = 0; libsToTry[i]; i++) {
-            void* lib = dlopen(libsToTry[i], RTLD_NOLOAD | RTLD_NOW);
-            if (!lib) continue;
-            
-            void* fn = dlsym(lib, "vkQueuePresentKHR");
-            if (fn) {
-                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-                    "Found vkQueuePresentKHR in %s at %p", libsToTry[i], fn);
-                if (fn != dlsym(g_VulkanLib, "vkQueuePresentKHR")) {
-                    // Different address — this is the ICD's own implementation
-                    hook(fn, (void*)hook_vkQueuePresentKHR, (void**)&orig_vkQueuePresentKHR);
-                    __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-                        "Hooked ICD vkQueuePresentKHR in %s", libsToTry[i]);
+        // Find the ICD (vulkan.adreno.so) base range from /proc/self/maps
+        // and get its vkQueuePresentKHR via vk_icdGetInstanceProcAddr
+        uintptr_t icdPresent    = 0;
+        uintptr_t icdSwapchain  = 0;
+        uintptr_t icdDevice     = 0;
+        {
+            // vulkan.adreno.so is mapped but not openable via dlopen by name.
+            // Find its base address from /proc/maps then dlopen by path.
+            FILE* maps = fopen("/proc/self/maps", "r");
+            char line[512];
+            char icdPath[256] = {};
+            while (fgets(line, sizeof(line), maps)) {
+                if (strstr(line, "vulkan.adreno.so") && strstr(line, "r-xp")) {
+                    // Extract path — it's after the last space
+                    char* path = strrchr(line, ' ');
+                    if (path) {
+                        path++;
+                        path[strcspn(path, "\n")] = 0;
+                        strncpy(icdPath, path, sizeof(icdPath)-1);
+                        break;
+                    }
                 }
             }
+            fclose(maps);
 
-            void* fn2 = dlsym(lib, "vkCreateSwapchainKHR");
-            if (fn2 && fn2 != dlsym(g_VulkanLib, "vkCreateSwapchainKHR")) {
-                hook(fn2, (void*)hook_vkCreateSwapchainKHR, (void**)&orig_vkCreateSwapchainKHR);
-                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-                    "Hooked ICD vkCreateSwapchainKHR in %s", libsToTry[i]);
-            }
-
-            void* fn3 = dlsym(lib, "vkCreateDevice");
-            if (fn3 && fn3 != dlsym(g_VulkanLib, "vkCreateDevice")) {
-                hook(fn3, (void*)hook_vkCreateDevice, (void**)&orig_vkCreateDevice);
-                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-                    "Hooked ICD vkCreateDevice in %s", libsToTry[i]);
+            if (icdPath[0]) {
+                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "ICD path: %s", icdPath);
+                void* icd = dlopen(icdPath, RTLD_NOW | RTLD_NOLOAD);
+                if (!icd) icd = dlopen(icdPath, RTLD_NOW | RTLD_GLOBAL);
+                if (icd) {
+                    // Try standard Vulkan ICD entry point
+                    auto icdGetProc = (PFN_vkGetInstanceProcAddr)dlsym(icd, "vk_icdGetInstanceProcAddr");
+                    if (!icdGetProc)
+                        icdGetProc = (PFN_vkGetInstanceProcAddr)dlsym(icd, "vkGetInstanceProcAddr");
+                    if (icdGetProc) {
+                        icdPresent   = (uintptr_t)icdGetProc(VK_NULL_HANDLE, "vkQueuePresentKHR");
+                        icdSwapchain = (uintptr_t)icdGetProc(VK_NULL_HANDLE, "vkCreateSwapchainKHR");
+                        icdDevice    = (uintptr_t)icdGetProc(VK_NULL_HANDLE, "vkCreateDevice");
+                        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                            "ICD procs: present=%p swapchain=%p device=%p",
+                            (void*)icdPresent, (void*)icdSwapchain, (void*)icdDevice);
+                    } else {
+                        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "ICD: no GetInstanceProcAddr");
+                    }
+                } else {
+                    __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                        "ICD dlopen failed: %s", dlerror());
+                }
             }
         }
 
-        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "InstallFull: done");
+        // Build the full set of addresses to search for
+        uintptr_t presentTargets[]  = { loaderPresent, exportedPresent, icdPresent,  0 };
+        uintptr_t swapchainTargets[] = { exportedSwapchain, icdSwapchain, 0 };
+        uintptr_t deviceTargets[]    = { exportedDevice,    icdDevice,    0 };
+
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+            "Targets — present: %p/%p/%p  swapchain: %p/%p  device: %p/%p",
+            (void*)presentTargets[0],  (void*)presentTargets[1],  (void*)presentTargets[2],
+            (void*)swapchainTargets[0],(void*)swapchainTargets[1],
+            (void*)deviceTargets[0],   (void*)deviceTargets[1]);
+
+        auto isTarget = [](uintptr_t v, uintptr_t* targets) -> bool {
+            if (!v) return false;
+            for (int i = 0; targets[i]; i++)
+                if (v == targets[i]) return true;
+            return false;
+        };
+
+        std::vector<uintptr_t*> presentSlots, swapchainSlots, deviceSlots;
+
+        // Scan ALL rw segments — specifically including libil2cpp and libnative-lib
+        FILE* maps = fopen("/proc/self/maps", "r");
+        char line[512];
+        while (fgets(line, sizeof(line), maps)) {
+            if (!strstr(line, "rw-p"))  continue;
+            if (strstr(line, "stack")) continue;
+            if (strstr(line, "dalvik-Pre-zygote")) continue;
+
+            uintptr_t start, end;
+            if (sscanf(line, "%lx-%lx", &start, &end) != 2) continue;
+            if (end <= start + sizeof(uintptr_t))            continue;
+            if (end - start > 128 * 1024 * 1024)            continue;
+
+            bool isIl2cpp  = strstr(line, "libil2cpp.so")    != nullptr;
+            bool isUnity   = strstr(line, "libunity.so")     != nullptr;
+            bool isMalloc  = strstr(line, "libc_malloc")     != nullptr;
+            bool isHwui    = strstr(line, "libhwui.so")      != nullptr;
+
+            // Only scan segments we care about — skip anonymous heap except malloc
+            if (!isIl2cpp && !isUnity && !isMalloc && !isHwui) {
+                // Still scan anonymous rw segments (loader dispatch tables live here)
+                if (!strstr(line, "anon") && !strstr(line, "/")) continue;
+            }
+
+            uintptr_t* ptr  = (uintptr_t*)start;
+            uintptr_t* last = (uintptr_t*)(end - sizeof(uintptr_t));
+            while (ptr <= last) {
+                uintptr_t v = *ptr;
+                if (isTarget(v, presentTargets))  { presentSlots.push_back(ptr);  }
+                if (isTarget(v, swapchainTargets)){ swapchainSlots.push_back(ptr);}
+                if (isTarget(v, deviceTargets))   { deviceSlots.push_back(ptr);   }
+                ptr++;
+            }
+        }
+        fclose(maps);
+
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+            "Found: %zu present, %zu swapchain, %zu device slots",
+            presentSlots.size(), swapchainSlots.size(), deviceSlots.size());
+
+        // Log where each present slot lives
+        for (uintptr_t* slot : presentSlots) {
+            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                "  Present slot @ %p = %p", slot, (void*)*slot);
+        }
+
+        auto patchAll = [](std::vector<uintptr_t*>& slots, void* hookFn,
+                        void** origOut, const char* name) {
+            for (uintptr_t* slot : slots) {
+                uintptr_t v = *slot;
+                if (v == (uintptr_t)hookFn) continue; // already patched
+                uintptr_t page = (uintptr_t)slot & ~(uintptr_t)4095;
+                if (mprotect((void*)page, 4096, PROT_READ | PROT_WRITE) != 0) continue;
+                if (origOut && !*origOut) *origOut = (void*)v;
+                *slot = (uintptr_t)hookFn;
+                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                    "Patched %s @ %p (was %p)", name, slot, (void*)v);
+            }
+        };
+
+        patchAll(presentSlots,  (void*)hook_vkQueuePresentKHR,    (void**)&orig_vkQueuePresentKHR,    "vkQueuePresentKHR");
+        patchAll(swapchainSlots,(void*)hook_vkCreateSwapchainKHR, (void**)&orig_vkCreateSwapchainKHR, "vkCreateSwapchainKHR");
+        patchAll(deviceSlots,   (void*)hook_vkCreateDevice,       (void**)&orig_vkCreateDevice,       "vkCreateDevice");
+
+        // Re-patch every 100ms for 10s in case slots are written after we scan
+        for (int i = 0; i < 100 && !g_SwapchainReady; i++) {
+            usleep(100000);
+            patchAll(presentSlots,  (void*)hook_vkQueuePresentKHR,    (void**)&orig_vkQueuePresentKHR,    "vkQueuePresentKHR");
+            patchAll(swapchainSlots,(void*)hook_vkCreateSwapchainKHR, (void**)&orig_vkCreateSwapchainKHR, "vkCreateSwapchainKHR");
+            patchAll(deviceSlots,   (void*)hook_vkCreateDevice,       (void**)&orig_vkCreateDevice,       "vkCreateDevice");
+            if (i % 10 == 9)
+                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                    "[%d] DeviceCaptured=%d SwapchainReady=%d", i,
+                    (int)g_DeviceCaptured, (int)g_SwapchainReady);
+        }
+
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+            "InstallFull done. DeviceCaptured=%d SwapchainReady=%d",
+            (int)g_DeviceCaptured, (int)g_SwapchainReady);
     }
 } // namespace VulkanHook
