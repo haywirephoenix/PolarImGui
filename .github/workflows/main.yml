@@ -99,7 +99,7 @@ jobs:
             -DANDROID_PLATFORM=android-21 \
             -DANDROID_PLATFORM_LEVEL=21 \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_STANDARD=17 \
+            -DCMAKE_CXX_STANDARD=20 \
             -DCURL_DIR="$PWD/curl-install/lib/cmake/CURL" \
             -DBNM_INCLUDE="$PWD/app/src/main/cpp/ByNameModding/include" \
             -DBNM_EXTERNAL_INCLUDE="$PWD/app/src/main/cpp/ByNameModding/external/include"
