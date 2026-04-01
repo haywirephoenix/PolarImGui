@@ -5,12 +5,13 @@
 #include "../ImGui/imgui_impl_vulkan.h"
 #include "../ByNameModding/external/include/dobby.h"
 #include "../Misc/Utils.h"
-#include "../Data/Fonts/Roboto-Regular.h"
 
 
 namespace VulkanHook {
 
+    extern unsigned char Roboto_Regular[];
     static void* g_VulkanLib = nullptr;
+
 
     static PFN_vkGetPhysicalDeviceQueueFamilyProperties _vkGetPhysicalDeviceQueueFamilyProperties = nullptr;
     static PFN_vkGetDeviceQueue                         _vkGetDeviceQueue = nullptr;
