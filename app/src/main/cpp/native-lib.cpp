@@ -1,3 +1,4 @@
+#include <vulkan/vulkan.h>
 #include <EGL/egl.h> // need to make a common.h that contains all these headers cuz this is nasty
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
@@ -33,6 +34,20 @@
 #include "Unity/Input.h"
 // the private version held by certain polarmodders has image loading and a lot more
 
+// Vulkan present hook
+PFN_vkQueuePresentKHR old_vkQueuePresentKHR = nullptr;
+
+VkResult new_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *pPresentInfo)
+{
+    static bool logged = false;
+    if (!logged) {
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkQueuePresentKHR called!");
+        logged = true;
+    }
+    // ImGui rendering goes here once confirmed working
+    return old_vkQueuePresentKHR(queue, pPresentInfo);
+}
+
 EGLBoolean (*old_eglSwapBuffers)(...);
 EGLBoolean new_eglSwapBuffers(EGLDisplay _display, EGLSurface _surface) {
     static bool logged = false;
@@ -47,13 +62,20 @@ EGLBoolean new_eglSwapBuffers(EGLDisplay _display, EGLSurface _surface) {
 void OnBNMLoaded()
 {
     __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "OnBNMLoaded called!");
-    
-    // Hook eglSwapBuffers here instead of lib_main
-    auto eglhandle = dlopen(OBFUSCATE("libEGL.so"), RTLD_LAZY);
-    auto eglSwapBuffers = dlsym(eglhandle, OBFUSCATE("eglSwapBuffers"));
-    if (eglSwapBuffers) {
-        hook(eglSwapBuffers, (void *) new_eglSwapBuffers, (void **) &old_eglSwapBuffers);
-        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "eglSwapBuffers hooked at: %p", eglSwapBuffers);
+
+    // Find vkQueuePresentKHR in the Vulkan loader
+    void *vkPresent = DobbySymbolResolver("libvulkan.so", "vkQueuePresentKHR");
+    if (!vkPresent) {
+        // Fallback - search all loaded libraries
+        void *vulkan = dlopen("libvulkan.so", RTLD_NOW | RTLD_NOLOAD);
+        if (vulkan) vkPresent = dlsym(vulkan, "vkQueuePresentKHR");
+    }
+
+    if (vkPresent) {
+        hook(vkPresent, (void *)new_vkQueuePresentKHR, (void **)&old_vkQueuePresentKHR);
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkQueuePresentKHR hooked at: %p", vkPresent);
+    } else {
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkQueuePresentKHR NOT found!");
     }
 
     Unity::Screen::Setup();
