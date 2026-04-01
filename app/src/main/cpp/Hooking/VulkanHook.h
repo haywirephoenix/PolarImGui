@@ -218,6 +218,8 @@ namespace VulkanHook {
         return true;
     }
 
+    static bool g_DeviceCaptured = false;
+
     // Hook: vkCreateDevice — capture device + queue
     static VkResult hook_vkCreateDevice(
         VkPhysicalDevice physicalDevice,
@@ -225,8 +227,10 @@ namespace VulkanHook {
         const VkAllocationCallbacks* pAllocator,
         VkDevice* pDevice)
     {
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkCreateDevice fired!");
         VkResult result = orig_vkCreateDevice(physicalDevice, pCreateInfo, pAllocator, pDevice);
         if (result == VK_SUCCESS) {
+            g_DeviceCaptured = true;
             g_PhysicalDevice = physicalDevice;
             g_Device = *pDevice;
             // Find graphics queue family
@@ -265,6 +269,8 @@ namespace VulkanHook {
         const VkAllocationCallbacks* pAllocator,
         VkSwapchainKHR* pSwapchain)
     {
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkCreateSwapchainKHR fired!");
+
         VkResult result = orig_vkCreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
         if (result == VK_SUCCESS) {
             __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkCreateSwapchainKHR hooked %dx%d fmt=%d",
@@ -274,12 +280,21 @@ namespace VulkanHook {
         return result;
     }
 
+    
+
     // Hook: vkQueuePresentKHR — render ImGui each frame
     static VkResult hook_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* pPresentInfo) {
         static bool logged = false;
         if (!logged) {
             __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkQueuePresentKHR fired!");
             logged = true;
+        }
+        // Capture device state on first present if vkCreateDevice hook didn't fire
+        if (!g_DeviceCaptured) {
+            // We can't get VkDevice from VkQueue directly, so we need vkCreateDevice to fire.
+            // If this log appears but vkCreateDevice never did, we have a dispatch issue.
+            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "present fired but device not captured yet");
+            return orig_vkQueuePresentKHR(queue, pPresentInfo);
         }
         if (!g_SwapchainReady || g_Frames.empty())
             return orig_vkQueuePresentKHR(queue, pPresentInfo);
