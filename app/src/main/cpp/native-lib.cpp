@@ -47,6 +47,15 @@ EGLBoolean new_eglSwapBuffers(EGLDisplay _display, EGLSurface _surface) {
 void OnBNMLoaded()
 {
     __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "OnBNMLoaded called!");
+    
+    // Hook eglSwapBuffers here instead of lib_main
+    auto eglhandle = dlopen(OBFUSCATE("libEGL.so"), RTLD_LAZY);
+    auto eglSwapBuffers = dlsym(eglhandle, OBFUSCATE("eglSwapBuffers"));
+    if (eglSwapBuffers) {
+        hook(eglSwapBuffers, (void *) new_eglSwapBuffers, (void **) &old_eglSwapBuffers);
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "eglSwapBuffers hooked at: %p", eglSwapBuffers);
+    }
+
     Unity::Screen::Setup();
     Unity::Input::Setup();
     Pointers::LoadPointers();
@@ -78,22 +87,22 @@ __attribute__((constructor))
 void lib_main()
 {
     LOGI("lib_main called");
-    auto eglhandle = dlopen(OBFUSCATE("libEGL.so"), RTLD_LAZY);
-    LOGI("eglhandle: %p", eglhandle);
-    const char *dlopen_error = dlerror();
-    if (dlopen_error)
-    {
-        eglhandle = dlopen(OBFUSCATE("libunity.so"), RTLD_LAZY);
-    }
-    auto eglSwapBuffers = dlsym(eglhandle, OBFUSCATE("eglSwapBuffers"));
-    LOGI("eglSwapBuffers: %p", eglSwapBuffers);
-    const char *dlsym_error = dlerror();
-    if (dlsym_error)
-    {
-        LOGE(OBFUSCATE("Cannot load symbol 'eglSwapBuffers': %s"), dlsym_error);
-    } else
-    {
-        hook(eglSwapBuffers, (void *) new_eglSwapBuffers, (void **) &old_eglSwapBuffers);
-    }
+    // auto eglhandle = dlopen(OBFUSCATE("libEGL.so"), RTLD_LAZY);
+    // LOGI("eglhandle: %p", eglhandle);
+    // const char *dlopen_error = dlerror();
+    // if (dlopen_error)
+    // {
+    //     eglhandle = dlopen(OBFUSCATE("libunity.so"), RTLD_LAZY);
+    // }
+    // auto eglSwapBuffers = dlsym(eglhandle, OBFUSCATE("eglSwapBuffers"));
+    // LOGI("eglSwapBuffers: %p", eglSwapBuffers);
+    // const char *dlsym_error = dlerror();
+    // if (dlsym_error)
+    // {
+    //     LOGE(OBFUSCATE("Cannot load symbol 'eglSwapBuffers': %s"), dlsym_error);
+    // } else
+    // {
+    //     hook(eglSwapBuffers, (void *) new_eglSwapBuffers, (void **) &old_eglSwapBuffers);
+    // }
     // No pthread_create needed - BNM handles threading internally
 }
