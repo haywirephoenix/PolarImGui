@@ -26,9 +26,10 @@ namespace Unity
 
         struct Touch {
             int m_FingerId{};
-            Vector2 m_Position;
-            Vector2 m_RawPosition;
-            Vector2 m_PositionDelta;
+            int m_FingerId{};
+            BNM::UnityEngine::Vector2 m_Position;
+            BNM::UnityEngine::Vector2 m_RawPosition;
+            BNM::UnityEngine::Vector2 m_PositionDelta;
             float m_TimeDelta{};
             int m_TapCount{};
             TouchPhase m_Phase{};
@@ -87,9 +88,9 @@ namespace Unity
         void Setup()
         {
             Input = BNM::Class("UnityEngine", "Input");
-            GetTouch     = Input("GetTouch", 1);
-            GetMouseButtonDown = Input("GetMouseButtonDown", 1);
-            HOOK(GetTouch.GetOffset(), FakeGetTouch, old_FakeGetTouch);
+            GetTouch           = Input.GetMethod("GetTouch", 1);
+            GetMouseButtonDown = Input.GetMethod("GetMouseButtonDown", 1);
+            BNM_HOOK(GetTouch.GetOffset(), FakeGetTouch, old_FakeGetTouch);
             is_done = true;
         }
     }

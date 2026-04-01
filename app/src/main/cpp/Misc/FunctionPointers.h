@@ -25,14 +25,14 @@ namespace Pointers {
 
     void LoadPointers() {
         GameObject = BNM::Class("UnityEngine", "GameObject");
-        GameObject_Transform = GameObject["transform"];
+        GameObject_Transform = GameObject.GetProperty("transform");
 
         Transform = BNM::Class("UnityEngine", "Transform");
-        Transform_Position = Transform["position"];
+        Transform_Position   = Transform.GetProperty("position");
 
         Camera = BNM::Class("UnityEngine", "Camera");
-        Camera_WorldToScreenPoint = Camera("WorldToScreenPoint", 1);
-        Camera_Main = Camera["main"];
+        Camera_WorldToScreenPoint = Camera.GetMethod("WorldToScreenPoint", 1);
+        Camera_Main          = Camera.GetProperty("main");
     }
 }
 

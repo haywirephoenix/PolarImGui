@@ -17,8 +17,8 @@ namespace Unity
         void Setup()
         {
             Screen = BNM::Class("UnityEngine", "Screen");
-            Height = Screen["height"];
-            Width  = Screen["width"];
+            Height = Screen.GetProperty("height");
+            Width  = Screen.GetProperty("width");
             is_done = true;
         }
     }

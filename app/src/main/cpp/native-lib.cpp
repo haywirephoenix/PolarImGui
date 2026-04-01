@@ -40,13 +40,23 @@ EGLBoolean new_eglSwapBuffers(EGLDisplay _display, EGLSurface _surface) {
 
     return old_eglSwapBuffers(_display, _surface);
 }
-bool emulator = true;
-JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void * reserved)
+void OnBNMLoaded()
 {
-    if(!emulator){
-        jvm = vm;
-        JNIEnv *env;
-        vm->GetEnv((void **) &env, JNI_VERSION_1_6);
+    Unity::Screen::Setup();
+    Unity::Input::Setup();
+    Pointers::LoadPointers();
+}
+
+bool emulator = true;
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
+{
+    JNIEnv *env;
+    vm->GetEnv((void **) &env, JNI_VERSION_1_6);
+
+    BNM::Loading::AddOnLoadedEvent(OnBNMLoaded);
+    BNM::Loading::TryLoadByJNI(env);
+
+    if (!emulator) {
         UnityPlayer_cls = env->FindClass(OBFUSCATE("com/unity3d/player/UnityPlayer"));
         UnityPlayer_CurrentActivity_fid = env->GetStaticFieldID(UnityPlayer_cls,
                                                                 OBFUSCATE("currentActivity"),
@@ -54,24 +64,10 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void * reserved)
         hook((void *) env->functions->RegisterNatives, (void *) hook_RegisterNatives,
              (void **) &old_RegisterNatives);
     }
+
     return JNI_VERSION_1_6;
 }
 
-void *hack_thread(void *)
-{
-    using namespace BNM;
-    do {
-        sleep(1);
-    } while (!Il2cppLoaded());
-    AttachIl2Cpp(); // this is required when you use bynamemodding functions
-    Unity::Screen::Setup();
-    if(emulator){
-        Unity::Input::Setup();
-    }
-    Pointers::LoadPointers();
-    DetachIl2Cpp(); // remember to detach when you are done using bynamemodding functions
-    return NULL;
-}
 __attribute__((constructor))
 void lib_main()
 {
@@ -79,7 +75,7 @@ void lib_main()
     const char *dlopen_error = dlerror();
     if (dlopen_error)
     {
-        eglhandle = dlopen(OBFUSCATE("libunity.so"), RTLD_LAZY); // I have no idea if this works it was just to me that it would fix crashes so I did it really quickly
+        eglhandle = dlopen(OBFUSCATE("libunity.so"), RTLD_LAZY);
     }
     auto eglSwapBuffers = dlsym(eglhandle, OBFUSCATE("eglSwapBuffers"));
     const char *dlsym_error = dlerror();
@@ -90,6 +86,5 @@ void lib_main()
     {
         hook(eglSwapBuffers, (void *) new_eglSwapBuffers, (void **) &old_eglSwapBuffers);
     }
-    pthread_t ptid;
-    pthread_create(&ptid, NULL, hack_thread, NULL);
+    // No pthread_create needed - BNM handles threading internally
 }
