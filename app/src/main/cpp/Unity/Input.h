@@ -1,7 +1,7 @@
 #pragma once
 
 #include "BNM/BNM.hpp"
-#include "Unity/Screen.h"
+#include "Screen.h"
 
 using namespace BNM::UnityEngine;
 using namespace BNM;
