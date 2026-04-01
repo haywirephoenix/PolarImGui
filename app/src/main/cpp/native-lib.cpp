@@ -40,8 +40,10 @@ void OnBNMLoaded()
 
 bool emulator = true;
 
-// Install Vulkan hooks as early as possible — before Unity's render thread
-// gets a chance to call vkGetInstanceProcAddr and build its dispatch table.
+// InstallEarly runs at .so load time — before any other thread including
+// Unity's render thread. It hooks the three Vulkan exported symbols directly.
+// It deliberately does NOT hook vkGetInstanceProcAddr / vkGetDeviceProcAddr
+// because those are PAC-protected on Android 16 and will SIGILL under Dobby.
 __attribute__((constructor))
 void lib_main()
 {
@@ -55,21 +57,11 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
     JNIEnv *env;
     vm->GetEnv((void **) &env, JNI_VERSION_1_6);
 
-    // Install remaining hooks (direct symbol hooks + per-frame VK functions).
-    // InstallEarly() already covered GetInstanceProcAddr/GetDeviceProcAddr,
-    // but we finish the rest here once we have confirmed libvulkan.so is open.
-    std::thread([](){
-        void* vk = nullptr;
-        for (int i = 0; i < 200 && !vk; i++) {
-            vk = dlopen("libvulkan.so", RTLD_NOLOAD | RTLD_NOW);
-            if (!vk) usleep(50000); // 50ms
-        }
-        if (vk) {
-            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "libvulkan.so confirmed loaded, installing full hooks");
-            VulkanHook::InstallFull();
-        } else {
-            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "libvulkan.so never loaded");
-        }
+    // InstallFull waits 500ms then patches cached function pointers in
+    // libhwui.so and libunity.so data segments, covering the case where those
+    // libraries called vkGetInstanceProcAddr before our hooks were in place.
+    std::thread([]() {
+        VulkanHook::InstallFull();
     }).detach();
 
     BNM::Loading::AddOnLoadedEvent(OnBNMLoaded);
