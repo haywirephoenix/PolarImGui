@@ -11,7 +11,6 @@ add_library(
              ImGui/imgui_widgets.cpp
              ImGui/imgui_demo.cpp
              ImGui/imgui_draw.cpp
-             ByNameModding/BNM.cpp        
              http/cpr/async.cpp
              http/cpr/auth.cpp
              http/cpr/bearer.cpp
@@ -41,16 +40,14 @@ add_library(
              Memory/MemoryBackup.cpp
              Memory/MemoryPatch.cpp)
 
-# BNM native lib
 target_include_directories(
         native-lib
         PRIVATE
         ${BNM_INCLUDE}
         ${BNM_EXTERNAL_INCLUDE})
 
-# And add libBNM.a to target_link_libraries:
-set(BNM_LIB ${CMAKE_CURRENT_SOURCE_DIR}/libs/arm64-v8a/libBNM.a)
-
+set(DOBBY_LIB ${CMAKE_CURRENT_SOURCE_DIR}/libs/${CMAKE_ANDROID_ARCH_ABI}/libdobby.a)
+set(BNM_LIB   ${CMAKE_CURRENT_SOURCE_DIR}/libs/${CMAKE_ANDROID_ARCH_ABI}/libBNM.a)
 
 find_library(log-lib log)
 find_library(egl EGL)
@@ -58,8 +55,9 @@ find_library(android android)
 find_library(GLESV2_LIB GLESv2)
 find_library(LZ_LIB z)
 find_package(CURL REQUIRED CONFIG)
+
 if (${ANDROID_PLATFORM_LEVEL} LESS 12)
-    message(FATAL_ERROR "OpenGL 2 is not supported before API level 11 /
+    message(FATAL_ERROR "OpenGL 2 is not supported before API level 11 \
                       (currently using ${ANDROID_PLATFORM_LEVEL}).")
     return()
 elseif (${ANDROID_PLATFORM_LEVEL} LESS 18)
@@ -70,13 +68,11 @@ else ()
     set(OPENGL_LIB GLESv3)
 endif (${ANDROID_PLATFORM_LEVEL} LESS 12)
 
-    set(DOBBY_LIB ${CMAKE_CURRENT_SOURCE_DIR}/libs/${CMAKE_ANDROID_ARCH_ABI}/libdobby.a)
-
-
 target_link_libraries(
         native-lib
         ${LZ_LIB}
         ${DOBBY_LIB}
+        ${BNM_LIB}
         ${OPENGL_LIB}
         ${GLESV2_LIB}
         ${android}
