@@ -91,7 +91,7 @@ namespace Unity
             Input = BNM::Class("UnityEngine", "Input");
             GetTouch           = Input.GetMethod("GetTouch", 1);
             GetMouseButtonDown = Input.GetMethod("GetMouseButtonDown", 1);
-            hook(GetTouch.GetOffset(), FakeGetTouch, old_FakeGetTouch);
+            hook((void *)GetTouch.GetOffset(), (void *)FakeGetTouch, (void **)&old_FakeGetTouch);
             is_done = true;
         }
     }
