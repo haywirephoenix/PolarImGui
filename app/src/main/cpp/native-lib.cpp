@@ -46,8 +46,20 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
     JNIEnv *env;
     vm->GetEnv((void **) &env, JNI_VERSION_1_6);
 
-    // Install Vulkan hooks before BNM so they're in place before Unity's render thread starts
-    VulkanHook::Install();
+    std::thread([](){
+    // Wait for Unity's render thread to load Vulkan
+    void* vk = nullptr;
+    for (int i = 0; i < 100 && !vk; i++) {
+        vk = dlopen("libvulkan.so", RTLD_NOLOAD | RTLD_NOW);
+        if (!vk) usleep(50000); // 50ms
+    }
+    if (vk) {
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "libvulkan.so found after wait, installing hooks");
+        VulkanHook::Install();
+    } else {
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "libvulkan.so never loaded");
+    }
+    }).detach();
 
     BNM::Loading::AddOnLoadedEvent(OnBNMLoaded);
     bool bnmLoaded = BNM::Loading::TryLoadByJNI(env);
