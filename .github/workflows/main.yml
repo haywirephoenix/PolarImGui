@@ -96,64 +96,64 @@ jobs:
         cat -A "$ASM_FILE" | grep -n "common_closure_bridge_handler"
 
         python3 - <<'EOF'
-    import re
-    path = "Dobby/source/TrampolineBridge/ClosureTrampolineBridge/arm64/closure_bridge_arm64.asm"
-    with open(path, 'rb') as f:
-        content = f.read().decode('utf-8', errors='replace')
+        import re
+        path = "Dobby/source/TrampolineBridge/ClosureTrampolineBridge/arm64/closure_bridge_arm64.asm"
+        with open(path, 'rb') as f:
+            content = f.read().decode('utf-8', errors='replace')
 
-    # Replace adrp x17, sym@PAGE with adr x17, sym
-    content = re.sub(r'adrp\s+x17,\s+common_closure_bridge_handler@PAGE\r?\n', 
-                    'adr x17, common_closure_bridge_handler\n', content)
-    # Remove the add x17, x17, sym@PAGEOFF line entirely
-    content = re.sub(r'add\s+x17,\s+x17,\s+common_closure_bridge_handler@PAGEOFF\r?\n', 
-                    '', content)
+        # Replace adrp x17, sym@PAGE with adr x17, sym
+        content = re.sub(r'adrp\s+x17,\s+common_closure_bridge_handler@PAGE\r?\n', 
+                        'adr x17, common_closure_bridge_handler\n', content)
+        # Remove the add x17, x17, sym@PAGEOFF line entirely
+        content = re.sub(r'add\s+x17,\s+x17,\s+common_closure_bridge_handler@PAGEOFF\r?\n', 
+                        '', content)
 
-    with open(path, 'w', newline='\n') as f:
-        f.write(content)
-    print("Patch applied successfully")
-    EOF
+        with open(path, 'w', newline='\n') as f:
+            f.write(content)
+        print("Patch applied successfully")
+        EOF
 
-        echo "--- After patch ---"
-        grep -n "common_closure_bridge_handler" "$ASM_FILE"
+            echo "--- After patch ---"
+            grep -n "common_closure_bridge_handler" "$ASM_FILE"
 
-        cmake -G Ninja \
-          -B dobby-build \
-          -S Dobby \
-          -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
-          -DANDROID_ABI=arm64-v8a \
-          -DANDROID_PLATFORM=android-21 \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DDOBBY_DEBUG=OFF \
-          -DPlugin.SymbolResolver=OFF \
-          -DPlugin.GlobalOffsetTableHook=OFF
+            cmake -G Ninja \
+              -B dobby-build \
+              -S Dobby \
+              -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+              -DANDROID_ABI=arm64-v8a \
+              -DANDROID_PLATFORM=android-21 \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DDOBBY_DEBUG=OFF \
+              -DPlugin.SymbolResolver=OFF \
+              -DPlugin.GlobalOffsetTableHook=OFF
 
-        cmake --build dobby-build --parallel
+            cmake --build dobby-build --parallel
 
-        cp dobby-build/libdobby.a app/src/main/cpp/libs/arm64-v8a/libdobby.a
+            cp dobby-build/libdobby.a app/src/main/cpp/libs/arm64-v8a/libdobby.a
 
-        echo "--- Dobby symbols ---"
-        nm app/src/main/cpp/libs/arm64-v8a/libdobby.a | grep -E "T DobbyHook|T DobbyDestroy"
-        echo "---------------------"
-      # ── 8. Configure the main project ────────────────────────────────────────
-      # BNM_INCLUDE and BNM_EXTERNAL_INCLUDE point CMake at the BNM headers
-      # you copied into the repo. Adjust the paths to match wherever you placed
-      # the include/ and external/include/ directories from the BNM repo.
-      - name: Configure CMake
-        env:
-          NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: |
-          cmake -G Ninja \
-            -B build \
-            -S app/src/main/cpp \
-            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-21 \
-            -DANDROID_PLATFORM_LEVEL=21 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_STANDARD=20 \
-            -DCURL_DIR="$PWD/curl-install/lib/cmake/CURL" \
-            -DBNM_INCLUDE="$PWD/app/src/main/cpp/ByNameModding/include" \
-            -DBNM_EXTERNAL_INCLUDE="$PWD/app/src/main/cpp/ByNameModding/external/include"
+            echo "--- Dobby symbols ---"
+            nm app/src/main/cpp/libs/arm64-v8a/libdobby.a | grep -E "T DobbyHook|T DobbyDestroy"
+            echo "---------------------"
+          # ── 8. Configure the main project ────────────────────────────────────────
+          # BNM_INCLUDE and BNM_EXTERNAL_INCLUDE point CMake at the BNM headers
+          # you copied into the repo. Adjust the paths to match wherever you placed
+          # the include/ and external/include/ directories from the BNM repo.
+          - name: Configure CMake
+            env:
+              NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
+            run: |
+              cmake -G Ninja \
+                -B build \
+                -S app/src/main/cpp \
+                -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+                -DANDROID_ABI=arm64-v8a \
+                -DANDROID_PLATFORM=android-21 \
+                -DANDROID_PLATFORM_LEVEL=21 \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_CXX_STANDARD=20 \
+                -DCURL_DIR="$PWD/curl-install/lib/cmake/CURL" \
+                -DBNM_INCLUDE="$PWD/app/src/main/cpp/ByNameModding/include" \
+                -DBNM_EXTERNAL_INCLUDE="$PWD/app/src/main/cpp/ByNameModding/external/include"
 
       # ── 9. Build ─────────────────────────────────────────────────────────────
       - name: Build
