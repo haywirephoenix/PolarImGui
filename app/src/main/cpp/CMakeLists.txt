@@ -46,7 +46,10 @@ target_include_directories(
         ${BNM_INCLUDE}
         ${BNM_EXTERNAL_INCLUDE})
 
-set(DOBBY_LIB ${CMAKE_CURRENT_SOURCE_DIR}/libs/${CMAKE_ANDROID_ARCH_ABI}/libdobby.a)
+set(BNM_LIB ${CMAKE_CURRENT_SOURCE_DIR}/libs/arm64-v8a/libBNM.a)
+if(NOT EXISTS ${BNM_LIB})
+    message(FATAL_ERROR "libBNM.a not found at: ${BNM_LIB}")
+endif()
 set(BNM_LIB   ${CMAKE_CURRENT_SOURCE_DIR}/libs/${CMAKE_ANDROID_ARCH_ABI}/libBNM.a)
 
 find_library(log-lib log)
