@@ -1,6 +1,6 @@
 #ifndef UTILS_H
 #define UTILS_H
-#include "../Hooking/dobby.h"
+#include "dobby.h"
 typedef unsigned long DWORD;
 static DWORD libBase;
 

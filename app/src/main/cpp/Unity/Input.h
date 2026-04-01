@@ -4,7 +4,9 @@
 #include "Screen.h"
 
 using namespace BNM::UnityEngine;
+using namespace BNM::Structures::Unity;
 using namespace BNM;
+
 
 namespace Unity
 {
@@ -26,10 +28,9 @@ namespace Unity
 
         struct Touch {
             int m_FingerId{};
-            int m_FingerId{};
-            BNM::UnityEngine::Vector2 m_Position;
-            BNM::UnityEngine::Vector2 m_RawPosition;
-            BNM::UnityEngine::Vector2 m_PositionDelta;
+            Vector2 m_Position;
+            Vector2 m_RawPosition;
+            Vector2 m_PositionDelta;
             float m_TimeDelta{};
             int m_TapCount{};
             TouchPhase m_Phase{};
@@ -90,7 +91,7 @@ namespace Unity
             Input = BNM::Class("UnityEngine", "Input");
             GetTouch           = Input.GetMethod("GetTouch", 1);
             GetMouseButtonDown = Input.GetMethod("GetMouseButtonDown", 1);
-            BNM_HOOK(GetTouch.GetOffset(), FakeGetTouch, old_FakeGetTouch);
+            hook(GetTouch.GetOffset(), FakeGetTouch, old_FakeGetTouch);
             is_done = true;
         }
     }

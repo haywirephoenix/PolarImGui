@@ -9,6 +9,7 @@
 #include "BNM/BNM.hpp"
 
 using namespace BNM::UnityEngine;
+using namespace BNM::Structures::Unity;
 using namespace BNM;
 
 namespace Pointers {
