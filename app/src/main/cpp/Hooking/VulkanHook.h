@@ -5,6 +5,8 @@
 #include "../ImGui/imgui_impl_vulkan.h"
 #include "../ByNameModding/external/include/dobby.h"
 #include "../Misc/Utils.h"
+#include "../Data/Fonts/Roboto-Regular.h"
+
 
 namespace VulkanHook {
 
@@ -245,7 +247,6 @@ namespace VulkanHook {
                 ImGuiIO& io = ImGui::GetIO();
                 io.IniFilename = nullptr;
                 // Load font
-                extern unsigned int Roboto_Regular[];
                 io.Fonts->AddFontFromMemoryTTF(Roboto_Regular, 22, 22.0f);
                 ImGui_ImplAndroid_Init(nullptr);
                 SetupImGui();
