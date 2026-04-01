@@ -699,6 +699,50 @@ namespace VulkanHook {
         fclose(maps);
     }
 
+    static void IdentifyMysteryPointer() {
+        uintptr_t mystery = 0x7a76fd20f0; // the stable address from hwui's data
+        
+        // Find which library it belongs to
+        FILE* maps = fopen("/proc/self/maps", "r");
+        char line[512];
+        while (fgets(line, sizeof(line), maps)) {
+            uintptr_t start, end;
+            if (sscanf(line, "%lx-%lx", &start, &end) != 2) continue;
+            if (mystery >= start && mystery < end) {
+                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                    "Mystery %p belongs to: %s", (void*)mystery, line);
+            }
+        }
+        fclose(maps);
+        
+        // Also dladdr it
+        Dl_info info{};
+        if (dladdr((void*)mystery, &info)) {
+            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                "dladdr: sym=%s  file=%s  symaddr=%p",
+                info.dli_sname ? info.dli_sname : "null",
+                info.dli_fname ? info.dli_fname : "null",
+                info.dli_saddr);
+        } else {
+            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "dladdr failed for mystery ptr");
+        }
+
+        // Also widen the hwui scan to catch ALL pointers, not just libvulkan-range
+        // Dump the 8 pointers around the known one so we can see the struct context
+        uintptr_t hwui_ptr_addr = 0x7a72915fa0;
+        uintptr_t* ctx = (uintptr_t*)(hwui_ptr_addr - 4 * sizeof(uintptr_t));
+        for (int i = -4; i <= 4; i++) {
+            uintptr_t v = ctx[4 + i];
+            Dl_info di{};
+            dladdr((void*)v, &di);
+            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                "  hwui+%+d*8: [%p] = %p  (%s  %s)",
+                i, &ctx[4+i], (void*)v,
+                di.dli_fname ? di.dli_fname : "?",
+                di.dli_sname ? di.dli_sname : "?");
+        }
+    }
+
     // =========================================================================
     // InstallFull — called from background thread in JNI_OnLoad.
     // Waits briefly for libhwui's one-time Vulkan init (std::call_once on the
@@ -714,6 +758,7 @@ namespace VulkanHook {
             __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "InstallFull: VulkanLib not set");
             return;
         }
+        IdentifyMysteryPointer();
 
         // Wait for libhwui's render thread to finish its one-time Vulkan init.
         // The std::call_once in VulkanManager::initialize fires shortly after
