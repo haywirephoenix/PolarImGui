@@ -836,119 +836,82 @@ namespace VulkanHook {
             return;
         }
 
-        // Wait for libhwui's render thread one-time Vulkan init to complete
-        usleep(500000);
+        uintptr_t loaderPresent   = 0x7a76fd20f0; // stable Zygote address
+        uintptr_t exportedPresent   = (uintptr_t)dlsym(g_VulkanLib, "vkQueuePresentKHR");
+        uintptr_t exportedSwapchain = (uintptr_t)dlsym(g_VulkanLib, "vkCreateSwapchainKHR");
+        uintptr_t exportedDevice    = (uintptr_t)dlsym(g_VulkanLib, "vkCreateDevice");
+        uintptr_t exportedInstance  = (uintptr_t)dlsym(g_VulkanLib, "vkCreateInstance");
 
-        // The loader's internal dispatch stub for vkQueuePresentKHR —
-        // this is the value cached in dispatch tables across all rw segments.
-        // It lives in [anon:dalvik-Pre-zygote-LinearAlloc] so dladdr can't name it,
-        // but it's stable across runs because it's Zygote-inherited.
-        uintptr_t loaderPresent    = 0x7a76fd20f0;
+        // Re-patch loop: scan and patch every 50ms for 10 seconds.
+        // No initial wait — we want to catch CreateDevice/CreateSwapchain
+        // as early as possible.
+        for (int attempt = 0; attempt < 200; attempt++) {
+            usleep(50000); // 50ms
 
-        // Also try the raw exported addresses as fallback in case any library
-        // cached those instead
-        uintptr_t exportedPresent    = (uintptr_t)dlsym(g_VulkanLib, "vkQueuePresentKHR");
-        uintptr_t exportedSwapchain  = (uintptr_t)dlsym(g_VulkanLib, "vkCreateSwapchainKHR");
-        uintptr_t exportedDevice     = (uintptr_t)dlsym(g_VulkanLib, "vkCreateDevice");
+            std::vector<std::pair<uintptr_t*, const char*>> toLog;
 
-        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-            "InstallFull: loaderPresent=%p exportedPresent=%p",
-            (void*)loaderPresent, (void*)exportedPresent);
+            FILE* maps = fopen("/proc/self/maps", "r");
+            char line[512];
+            while (fgets(line, sizeof(line), maps)) {
+                if (!strstr(line, "rw-p"))  continue;
+                if (strstr(line, "stack")) continue;
+                if (strstr(line, "dalvik-Pre-zygote")) continue;
 
-        std::vector<uintptr_t*> presentCandidates;
-        std::vector<uintptr_t*> swapchainCandidates;
-        std::vector<uintptr_t*> deviceCandidates;
+                uintptr_t start, end;
+                if (sscanf(line, "%lx-%lx", &start, &end) != 2) continue;
+                if (end <= start + sizeof(uintptr_t))            continue;
+                if (end - start > 64 * 1024 * 1024)             continue;
 
-        FILE* maps = fopen("/proc/self/maps", "r");
-        char line[512];
-        while (fgets(line, sizeof(line), maps)) {
-            if (!strstr(line, "rw-p"))    continue;
-            if (strstr(line, "stack"))    continue;
-            if (strstr(line, "dalvik-Pre-zygote")) continue; // skip the LinearAlloc itself
+                uintptr_t* ptr  = (uintptr_t*)start;
+                uintptr_t* last = (uintptr_t*)(end - sizeof(uintptr_t));
+                while (ptr <= last) {
+                    uintptr_t v = *ptr;
+                    void* hookFn   = nullptr;
+                    void** origOut = nullptr;
+                    const char* fname = nullptr;
 
-            uintptr_t start, end;
-            if (sscanf(line, "%lx-%lx", &start, &end) != 2) continue;
-            if (end <= start + sizeof(uintptr_t))            continue;
-            if (end - start > 64 * 1024 * 1024)             continue; // skip huge regions
+                    if (v == loaderPresent || v == exportedPresent) {
+                        hookFn = (void*)hook_vkQueuePresentKHR;
+                        origOut = (void**)&orig_vkQueuePresentKHR;
+                        fname = "vkQueuePresentKHR";
+                    } else if (v == exportedSwapchain) {
+                        hookFn = (void*)hook_vkCreateSwapchainKHR;
+                        origOut = (void**)&orig_vkCreateSwapchainKHR;
+                        fname = "vkCreateSwapchainKHR";
+                    } else if (v == exportedDevice) {
+                        hookFn = (void*)hook_vkCreateDevice;
+                        origOut = (void**)&orig_vkCreateDevice;
+                        fname = "vkCreateDevice";
+                    }
 
-            uintptr_t* ptr  = (uintptr_t*)start;
-            uintptr_t* last = (uintptr_t*)(end - sizeof(uintptr_t));
-            while (ptr <= last) {
-                uintptr_t v = *ptr;
-                if (v == loaderPresent || v == exportedPresent) {
-                    presentCandidates.push_back(ptr);
-                    __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-                        "Present candidate: %p = %p  in %s", ptr, (void*)v, line);
+                    if (hookFn && v != (uintptr_t)hookFn) {
+                        uintptr_t page = (uintptr_t)ptr & ~(uintptr_t)4095;
+                        if (mprotect((void*)page, 4096, PROT_READ | PROT_WRITE) == 0) {
+                            if (origOut && *origOut == nullptr)
+                                *origOut = (void*)v;
+                            *ptr = (uintptr_t)hookFn;
+                            if (attempt < 3) { // only log first few attempts verbosely
+                                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                                    "[%d] Patched %s @ %p", attempt, fname, ptr);
+                            }
+                        }
+                    }
+                    ptr++;
                 }
-                if (v == exportedSwapchain) {
-                    swapchainCandidates.push_back(ptr);
-                    __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-                        "Swapchain candidate: %p = %p  in %s", ptr, (void*)v, line);
-                }
-                if (v == exportedDevice) {
-                    deviceCandidates.push_back(ptr);
-                    __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-                        "Device candidate: %p = %p  in %s", ptr, (void*)v, line);
-                }
-                ptr++;
             }
-        }
-        fclose(maps);
+            fclose(maps);
 
-        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-            "InstallFull: found %zu present, %zu swapchain, %zu device candidates",
-            presentCandidates.size(), swapchainCandidates.size(), deviceCandidates.size());
-
-        // Patch every candidate — one of them must be what the game's render
-        // thread calls. The hook itself is safe to call multiple times.
-        auto patchSlots = [](std::vector<uintptr_t*>& slots, void* hookFn,
-                            void** origOut, const char* name) {
-            for (uintptr_t* slot : slots) {
-                uintptr_t page = (uintptr_t)slot & ~(uintptr_t)4095;
-                if (mprotect((void*)page, 4096, PROT_READ | PROT_WRITE) != 0) {
-                    __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-                        "mprotect failed for %s slot %p", name, slot);
-                    continue;
-                }
-                uintptr_t old = *slot;
-                *slot = (uintptr_t)hookFn;
-                // Keep the last non-hook value as orig (any will do, they all
-                // point to the same underlying function)
-                if (origOut && old != (uintptr_t)hookFn)
-                    *origOut = (void*)old;
+            if (g_SwapchainReady) {
                 __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-                    "Patched %s slot %p  old=%p", name, slot, (void*)old);
+                    "InstallFull: SwapchainReady after %d attempts", attempt);
+                break;
             }
-        };
 
-        patchSlots(presentCandidates,  (void*)hook_vkQueuePresentKHR,
-                (void**)&orig_vkQueuePresentKHR,  "vkQueuePresentKHR");
-        patchSlots(swapchainCandidates,(void*)hook_vkCreateSwapchainKHR,
-                (void**)&orig_vkCreateSwapchainKHR,"vkCreateSwapchainKHR");
-        patchSlots(deviceCandidates,   (void*)hook_vkCreateDevice,
-                (void**)&orig_vkCreateDevice,       "vkCreateDevice");
-
-        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-            "InstallFull: all slots patched. orig: cd=%p cs=%p qp=%p",
-            (void*)orig_vkCreateDevice,
-            (void*)orig_vkCreateSwapchainKHR,
-            (void*)orig_vkQueuePresentKHR);
-
-        // Re-patch loop: keep watching for 5 seconds in case slots get
-        // overwritten after we patch them (e.g. libhwui reinitialises)
-        for (int i = 0; i < 50 && !g_SwapchainReady; i++) {
-            usleep(100000); // 100ms
-
-            uintptr_t hookAddr = (uintptr_t)hook_vkQueuePresentKHR;
-            for (uintptr_t* slot : presentCandidates) {
-                if (*slot != hookAddr) {
-                    __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-                        "Re-patch slot %p (was overwritten to %p)", slot, (void*)*slot);
-                    uintptr_t page = (uintptr_t)slot & ~(uintptr_t)4095;
-                    mprotect((void*)page, 4096, PROT_READ | PROT_WRITE);
-                    orig_vkQueuePresentKHR = (PFN_vkQueuePresentKHR)*slot;
-                    *slot = hookAddr;
-                }
+            // Every 20 attempts (~1s) log current state
+            if (attempt % 20 == 19) {
+                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                    "InstallFull [%d]: DeviceCaptured=%d SwapchainReady=%d",
+                    attempt, (int)g_DeviceCaptured, (int)g_SwapchainReady);
             }
         }
 
