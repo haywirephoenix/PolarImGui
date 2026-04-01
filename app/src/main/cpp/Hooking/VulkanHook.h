@@ -276,6 +276,11 @@ namespace VulkanHook {
 
     // Hook: vkQueuePresentKHR — render ImGui each frame
     static VkResult hook_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* pPresentInfo) {
+        static bool logged = false;
+        if (!logged) {
+            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkQueuePresentKHR fired!");
+            logged = true;
+        }
         if (!g_SwapchainReady || g_Frames.empty())
             return orig_vkQueuePresentKHR(queue, pPresentInfo);
 
@@ -375,7 +380,7 @@ namespace VulkanHook {
         LOAD_VK(vkDestroyCommandPool);
         LOAD_VK(vkDestroyRenderPass);
         LOAD_VK(vkDestroyDescriptorPool);
-        
+
         #undef LOAD_VK
 
         auto createDevice    = dlsym(vk, "vkCreateDevice");
