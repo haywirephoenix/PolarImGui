@@ -638,6 +638,67 @@ namespace VulkanHook {
         }
     }
 
+    static void DiagnoseAndPatchHwui() {
+        void* vk = g_VulkanLib;
+        
+        // Find libvulkan.so base and size from /proc/self/maps
+        uintptr_t vk_start = 0, vk_end = 0;
+        FILE* maps = fopen("/proc/self/maps", "r");
+        char line[512];
+        while (fgets(line, sizeof(line), maps)) {
+            if (!strstr(line, "libvulkan.so")) continue;
+            uintptr_t s, e;
+            sscanf(line, "%lx-%lx", &s, &e);
+            if (!vk_start) vk_start = s;
+            if (e > vk_end) vk_end = e;
+        }
+        fclose(maps);
+        
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+            "libvulkan range: %lx - %lx", vk_start, vk_end);
+
+        // Now scan libhwui rw segments for ANY pointer into libvulkan
+        maps = fopen("/proc/self/maps", "r");
+        while (fgets(line, sizeof(line), maps)) {
+            if (!strstr(line, "libhwui.so")) continue;
+            if (!strstr(line, "rw-p")) continue;
+            uintptr_t start, end;
+            sscanf(line, "%lx-%lx", &start, &end);
+            
+            uintptr_t* ptr  = (uintptr_t*)start;
+            uintptr_t* last = (uintptr_t*)(end - sizeof(uintptr_t));
+            while (ptr <= last) {
+                uintptr_t v = *ptr;
+                if (v >= vk_start && v < vk_end) {
+                    Dl_info info{};
+                    dladdr((void*)v, &info);
+                    __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                        "hwui[%p] = %p  sym=%s",
+                        ptr, (void*)v,
+                        info.dli_sname ? info.dli_sname : "?");
+                        
+                    // Patch it if the symbol name matches what we want
+                    if (info.dli_sname) {
+                        void* hookFn = nullptr;
+                        const char* n = info.dli_sname;
+                        if (strstr(n, "QueuePresent"))    hookFn = (void*)hook_vkQueuePresentKHR;
+                        if (strstr(n, "CreateSwapchain")) hookFn = (void*)hook_vkCreateSwapchainKHR;
+                        if (strstr(n, "CreateDevice"))    hookFn = (void*)hook_vkCreateDevice;
+                        if (hookFn) {
+                            uintptr_t page = (uintptr_t)ptr & ~(uintptr_t)4095;
+                            mprotect((void*)page, 4096, PROT_READ | PROT_WRITE);
+                            *ptr = (uintptr_t)hookFn;
+                            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                                "  -> PATCHED with hook %p", hookFn);
+                        }
+                    }
+                }
+                ptr++;
+            }
+        }
+        fclose(maps);
+    }
+
     // =========================================================================
     // InstallFull — called from background thread in JNI_OnLoad.
     // Waits briefly for libhwui's one-time Vulkan init (std::call_once on the
@@ -659,7 +720,7 @@ namespace VulkanHook {
         // the render thread starts — 500ms is conservative but safe.
         usleep(500000);
         DiagnoseDispatchTables();
-        PatchAllDispatchTables();
+        DiagnoseAndPatchHwui();
         __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "InstallFull: complete");
     }
 
