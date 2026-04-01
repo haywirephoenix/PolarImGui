@@ -75,9 +75,9 @@ target_link_libraries(
         native-lib
         ${LZ_LIB}
         -Wl,--whole-archive
-        ${DOBBY_LIB}
         ${BNM_LIB}
         -Wl,--no-whole-archive
+        ${DOBBY_LIB}
         ${OPENGL_LIB}
         ${GLESV2_LIB}
         ${android}
