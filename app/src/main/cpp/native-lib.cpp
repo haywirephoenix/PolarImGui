@@ -1,8 +1,4 @@
 #include <vulkan/vulkan.h>
-#include <EGL/egl.h> // need to make a common.h that contains all these headers cuz this is nasty
-#include <GLES2/gl2.h>
-#include <GLES2/gl2ext.h>
-#include <GLES2/gl2platform.h>
 #include <fstream>
 #include <sstream>
 #include "nlohmann/json.hpp"
@@ -10,7 +6,7 @@
 #include "Misc/Logging.h"
 #include "ImGui/imgui.h"
 #include "ImGui/imgui_impl_android.h"
-#include "ImGui/imgui_impl_opengl3.h"
+#include "ImGui/imgui_impl_vulkan.h"
 #include "Obfuscation/Obfuscate.h"
 #include <stdio.h>
 #include <android/native_window_jni.h>
@@ -30,68 +26,30 @@
 #include "Misc/ImGuiStuff.h"
 #include "Menu.h"
 #include "Hooking/JNIHooks.h"
+#include "Hooking/VulkanHook.h"
 #include "Unity/Screen.h"
 #include "Unity/Input.h"
-// the private version held by certain polarmodders has image loading and a lot more
 
-// Vulkan present hook
-PFN_vkQueuePresentKHR old_vkQueuePresentKHR = nullptr;
-
-VkResult new_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *pPresentInfo)
-{
-    static bool logged = false;
-    if (!logged) {
-        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkQueuePresentKHR called!");
-        logged = true;
-    }
-    // ImGui rendering goes here once confirmed working
-    return old_vkQueuePresentKHR(queue, pPresentInfo);
-}
-
-EGLBoolean (*old_eglSwapBuffers)(...);
-EGLBoolean new_eglSwapBuffers(EGLDisplay _display, EGLSurface _surface) {
-    static bool logged = false;
-    if (!logged) {
-        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "eglSwapBuffers hooked!");
-        logged = true;
-    }
-    SetupImGui();
-    Menu::DrawImGui();
-    return old_eglSwapBuffers(_display, _surface);
-}
 void OnBNMLoaded()
 {
     __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "OnBNMLoaded called!");
-
-    // Find vkQueuePresentKHR in the Vulkan loader
-    void *vkPresent = DobbySymbolResolver("libvulkan.so", "vkQueuePresentKHR");
-    if (!vkPresent) {
-        // Fallback - search all loaded libraries
-        void *vulkan = dlopen("libvulkan.so", RTLD_NOW | RTLD_NOLOAD);
-        if (vulkan) vkPresent = dlsym(vulkan, "vkQueuePresentKHR");
-    }
-
-    if (vkPresent) {
-        hook(vkPresent, (void *)new_vkQueuePresentKHR, (void **)&old_vkQueuePresentKHR);
-        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkQueuePresentKHR hooked at: %p", vkPresent);
-    } else {
-        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkQueuePresentKHR NOT found!");
-    }
-
+    VulkanHook::Install();
     Unity::Screen::Setup();
     Unity::Input::Setup();
     Pointers::LoadPointers();
 }
 
 bool emulator = true;
+
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
 {
+    __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "JNI_OnLoad called!");
     JNIEnv *env;
     vm->GetEnv((void **) &env, JNI_VERSION_1_6);
 
     BNM::Loading::AddOnLoadedEvent(OnBNMLoaded);
     bool bnmLoaded = BNM::Loading::TryLoadByJNI(env);
-    LOGI("BNM TryLoadByJNI result: %d", bnmLoaded);
+    __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "BNM TryLoadByJNI result: %d", bnmLoaded);
 
     if (!emulator) {
         UnityPlayer_cls = env->FindClass(OBFUSCATE("com/unity3d/player/UnityPlayer"));
@@ -108,23 +66,5 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
 __attribute__((constructor))
 void lib_main()
 {
-    LOGI("lib_main called");
-    // auto eglhandle = dlopen(OBFUSCATE("libEGL.so"), RTLD_LAZY);
-    // LOGI("eglhandle: %p", eglhandle);
-    // const char *dlopen_error = dlerror();
-    // if (dlopen_error)
-    // {
-    //     eglhandle = dlopen(OBFUSCATE("libunity.so"), RTLD_LAZY);
-    // }
-    // auto eglSwapBuffers = dlsym(eglhandle, OBFUSCATE("eglSwapBuffers"));
-    // LOGI("eglSwapBuffers: %p", eglSwapBuffers);
-    // const char *dlsym_error = dlerror();
-    // if (dlsym_error)
-    // {
-    //     LOGE(OBFUSCATE("Cannot load symbol 'eglSwapBuffers': %s"), dlsym_error);
-    // } else
-    // {
-    //     hook(eglSwapBuffers, (void *) new_eglSwapBuffers, (void **) &old_eglSwapBuffers);
-    // }
-    // No pthread_create needed - BNM handles threading internally
+    __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "lib_main called");
 }

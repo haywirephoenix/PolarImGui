@@ -630,58 +630,35 @@ void SetDarkRedTheme()
 }
 // these themes came from github https://github.com/ocornut/imgui/issues/707
 
+// SetupImGui is now only called from VulkanHook's vkCreateDevice hook
+// It no longer initialises any rendering backend
 void SetupImGui()
 {
-    if (!init)
-    {
-        auto context = ImGui::CreateContext();
-        if (!context)
-        {
-            return;
-        }
-        ImGuiIO &io = ImGui::GetIO();
-        ImFontConfig font_cfg;
+    ImGuiIO &io = ImGui::GetIO();
 
-        font_cfg.SizePixels = 22.0f;
+    io.Fonts->AddFontFromMemoryTTF(Roboto_Regular, 22, 22.0f);
 
-        io.Fonts->AddFontFromMemoryTTF(Roboto_Regular, 22, 22.0f);
+    io.IniFilename = NULL;
 
-        io.IniFilename = NULL;
-        io.KeyMap[ImGuiKey_UpArrow] = 19;
-        io.KeyMap[ImGuiKey_DownArrow] = 20;
-        io.KeyMap[ImGuiKey_LeftArrow] = 21;
-        io.KeyMap[ImGuiKey_RightArrow] = 22;
-        io.KeyMap[ImGuiKey_Enter] = 66;
-        io.KeyMap[ImGuiKey_Backspace] = 67;
-        io.KeyMap[ImGuiKey_PageUp] = 92;
-        io.KeyMap[ImGuiKey_PageDown] = 93;
-        io.KeyMap[ImGuiKey_Escape] = 111;
-        io.KeyMap[ImGuiKey_Delete] = 112;
-        io.KeyMap[ImGuiKey_Home] = 122;
-        io.KeyMap[ImGuiKey_End] = 123;
-        io.KeyMap[ImGuiKey_Insert] = 124;
-        io.KeyMap[ImGuiKey_UpArrow] = 19;
-        io.KeyMap[ImGuiKey_DownArrow] = 20;
-        io.KeyMap[ImGuiKey_LeftArrow] = 21;
-        io.KeyMap[ImGuiKey_RightArrow] = 22;
-        io.KeyMap[ImGuiKey_Enter] = 66;
-        io.KeyMap[ImGuiKey_Backspace] = 67;
-        io.KeyMap[ImGuiKey_PageUp] = 92;
-        io.KeyMap[ImGuiKey_PageDown] = 93;
-        io.KeyMap[ImGuiKey_Escape] = 111;
-        io.KeyMap[ImGuiKey_Delete] = 112;
-        io.KeyMap[ImGuiKey_Home] = 122;
-        io.KeyMap[ImGuiKey_End] = 123;
-        io.KeyMap[ImGuiKey_Insert] = 124;
+    // Key map (kept for touch input compatibility)
+    io.KeyMap[ImGuiKey_UpArrow]    = 19;
+    io.KeyMap[ImGuiKey_DownArrow]  = 20;
+    io.KeyMap[ImGuiKey_LeftArrow]  = 21;
+    io.KeyMap[ImGuiKey_RightArrow] = 22;
+    io.KeyMap[ImGuiKey_Enter]      = 66;
+    io.KeyMap[ImGuiKey_Backspace]  = 67;
+    io.KeyMap[ImGuiKey_PageUp]     = 92;
+    io.KeyMap[ImGuiKey_PageDown]   = 93;
+    io.KeyMap[ImGuiKey_Escape]     = 111;
+    io.KeyMap[ImGuiKey_Delete]     = 112;
+    io.KeyMap[ImGuiKey_Home]       = 122;
+    io.KeyMap[ImGuiKey_End]        = 123;
+    io.KeyMap[ImGuiKey_Insert]     = 124;
 
-        SetBlackGoldTheme();
+    SetBlackGoldTheme();
+    ImGui::GetStyle().ScaleAllSizes(3.0f);
 
-        ImGui::GetStyle().ScaleAllSizes(3.0f);
-
-        ImGui_ImplAndroid_Init(nullptr);
-        ImGui_ImplOpenGL3_Init();
-
-        init = true;
-    }
+    // No ImGui_ImplAndroid_Init or ImGui_ImplOpenGL3_Init here
+    // Those are handled by VulkanHook
 }
 #endif IMGUISTUFF

@@ -69,7 +69,8 @@ namespace Menu {
             ImGui::End();
         }
     }
-
+    
+    /*
     void DrawImGui() {
         if (init && Unity::Screen::is_done) {
 
@@ -110,5 +111,6 @@ namespace Menu {
 
         }
     }
+    */
 }
 #endif MENU

@@ -6,7 +6,7 @@ add_library(
              native-lib.cpp
              ImGui/imgui.cpp
              ImGui/imgui_impl_android.cpp
-             ImGui/imgui_impl_opengl3.cpp
+             ImGui/imgui_impl_vulkan.cpp
              ImGui/imgui_tables.cpp
              ImGui/imgui_widgets.cpp
              ImGui/imgui_demo.cpp
@@ -57,23 +57,9 @@ if(NOT EXISTS ${BNM_LIB})
 endif()
 
 find_library(log-lib log)
-find_library(egl EGL)
 find_library(android android)
-find_library(GLESV2_LIB GLESv2)
 find_library(LZ_LIB z)
 find_package(CURL REQUIRED CONFIG)
-
-if (${ANDROID_PLATFORM_LEVEL} LESS 12)
-    message(FATAL_ERROR "OpenGL 2 is not supported before API level 11 \
-                      (currently using ${ANDROID_PLATFORM_LEVEL}).")
-    return()
-elseif (${ANDROID_PLATFORM_LEVEL} LESS 18)
-    add_definitions("-DDYNAMIC_ES3")
-    set(GL3STUB_SRC gl3stub.c)
-    set(OPENGL_LIB GLESv2)
-else ()
-    set(OPENGL_LIB GLESv3)
-endif (${ANDROID_PLATFORM_LEVEL} LESS 12)
 
 target_link_libraries(
         native-lib
@@ -82,9 +68,6 @@ target_link_libraries(
         ${BNM_LIB}
         ${DOBBY_LIB}
         -Wl,--no-whole-archive
-        ${OPENGL_LIB}
-        ${GLESV2_LIB}
         ${android}
-        ${egl}
         ${log-lib}
         CURL::libcurl)
