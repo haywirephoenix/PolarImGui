@@ -85,42 +85,55 @@ jobs:
 
       # ── 7. Build Dobby for arm64-v8a ──────────────────────────
       - name: Build Dobby for arm64-v8a
-        env:
-          NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: |
-          git clone https://github.com/jmpews/Dobby.git --depth=1
+      env:
+        NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
+      run: |
+        git clone https://github.com/jmpews/Dobby.git --depth=1
 
-          ASM_FILE="Dobby/source/TrampolineBridge/ClosureTrampolineBridge/arm64/closure_bridge_arm64.asm"
+        ASM_FILE="Dobby/source/TrampolineBridge/ClosureTrampolineBridge/arm64/closure_bridge_arm64.asm"
 
-          # Show original lines for debugging
-          echo "--- Before patch ---"
-          grep -n "common_closure_bridge_handler" "$ASM_FILE"
+        echo "--- Before patch ---"
+        cat -A "$ASM_FILE" | grep -n "common_closure_bridge_handler"
 
-          # Replace adrp+add pair with a single adr instruction
-          sed -i 's/adrp x17, common_closure_bridge_handler@PAGE/adr x17, common_closure_bridge_handler/g' "$ASM_FILE"
-          sed -i '/add x17, x17, common_closure_bridge_handler@PAGEOFF/d' "$ASM_FILE"
+        python3 - <<'EOF'
+    import re
+    path = "Dobby/source/TrampolineBridge/ClosureTrampolineBridge/arm64/closure_bridge_arm64.asm"
+    with open(path, 'rb') as f:
+        content = f.read().decode('utf-8', errors='replace')
 
-          echo "--- After patch ---"
-          grep -n "common_closure_bridge_handler" "$ASM_FILE"
+    # Replace adrp x17, sym@PAGE with adr x17, sym
+    content = re.sub(r'adrp\s+x17,\s+common_closure_bridge_handler@PAGE\r?\n', 
+                    'adr x17, common_closure_bridge_handler\n', content)
+    # Remove the add x17, x17, sym@PAGEOFF line entirely
+    content = re.sub(r'add\s+x17,\s+x17,\s+common_closure_bridge_handler@PAGEOFF\r?\n', 
+                    '', content)
 
-          cmake -G Ninja \
-            -B dobby-build \
-            -S Dobby \
-            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-21 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DDOBBY_DEBUG=OFF \
-            -DPlugin.SymbolResolver=OFF \
-            -DPlugin.GlobalOffsetTableHook=OFF
+    with open(path, 'w', newline='\n') as f:
+        f.write(content)
+    print("Patch applied successfully")
+    EOF
 
-          cmake --build dobby-build --parallel
+        echo "--- After patch ---"
+        grep -n "common_closure_bridge_handler" "$ASM_FILE"
 
-          cp dobby-build/libdobby.a app/src/main/cpp/libs/arm64-v8a/libdobby.a
+        cmake -G Ninja \
+          -B dobby-build \
+          -S Dobby \
+          -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+          -DANDROID_ABI=arm64-v8a \
+          -DANDROID_PLATFORM=android-21 \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DDOBBY_DEBUG=OFF \
+          -DPlugin.SymbolResolver=OFF \
+          -DPlugin.GlobalOffsetTableHook=OFF
 
-          echo "--- Dobby symbols ---"
-          nm app/src/main/cpp/libs/arm64-v8a/libdobby.a | grep -E "T DobbyHook|T DobbyDestroy"
-          echo "---------------------"
+        cmake --build dobby-build --parallel
+
+        cp dobby-build/libdobby.a app/src/main/cpp/libs/arm64-v8a/libdobby.a
+
+        echo "--- Dobby symbols ---"
+        nm app/src/main/cpp/libs/arm64-v8a/libdobby.a | grep -E "T DobbyHook|T DobbyDestroy"
+        echo "---------------------"
       # ── 8. Configure the main project ────────────────────────────────────────
       # BNM_INCLUDE and BNM_EXTERNAL_INCLUDE point CMake at the BNM headers
       # you copied into the repo. Adjust the paths to match wherever you placed
