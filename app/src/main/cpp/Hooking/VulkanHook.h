@@ -375,11 +375,16 @@ namespace VulkanHook {
         LOAD_VK(vkDestroyCommandPool);
         LOAD_VK(vkDestroyRenderPass);
         LOAD_VK(vkDestroyDescriptorPool);
+        
+        #undef LOAD_VK
 
         auto createDevice    = dlsym(vk, "vkCreateDevice");
         auto createSwapchain = dlsym(vk, "vkCreateSwapchainKHR");
         auto queuePresent    = dlsym(vk, "vkQueuePresentKHR");
-    #undef LOAD_VK
+
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", 
+            "Hooking: createDevice=%p createSwapchain=%p queuePresent=%p",
+            createDevice, createSwapchain, queuePresent);
 
         hook(createDevice,    (void*)hook_vkCreateDevice,       (void**)&orig_vkCreateDevice);
         hook(createSwapchain, (void*)hook_vkCreateSwapchainKHR, (void**)&orig_vkCreateSwapchainKHR);
