@@ -1,9 +1,5 @@
 cmake_minimum_required(VERSION 3.4.1)
 
-target_compile_definitions(native-lib PRIVATE
-    VK_NO_PROTOTYPES
-)
-
 add_library(
              native-lib
              SHARED
@@ -44,6 +40,9 @@ add_library(
              Memory/MemoryBackup.cpp
              Memory/MemoryPatch.cpp)
 
+target_compile_definitions(native-lib PRIVATE
+    VK_NO_PROTOTYPES
+)
 
 target_include_directories(
         native-lib
@@ -65,7 +64,6 @@ find_library(log-lib log)
 find_library(android android)
 find_library(LZ_LIB z)
 find_package(CURL REQUIRED CONFIG)
-
 
 target_link_libraries(
         native-lib
