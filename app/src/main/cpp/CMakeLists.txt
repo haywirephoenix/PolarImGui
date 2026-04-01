@@ -56,6 +56,7 @@ if(NOT EXISTS ${BNM_LIB})
     message(FATAL_ERROR "libBNM.a not found at: ${BNM_LIB}")
 endif()
 
+find_library(vulkan-lib vulkan)
 find_library(log-lib log)
 find_library(android android)
 find_library(LZ_LIB z)
@@ -70,4 +71,5 @@ target_link_libraries(
         -Wl,--no-whole-archive
         ${android}
         ${log-lib}
+        ${vulkan-lib}
         CURL::libcurl)
