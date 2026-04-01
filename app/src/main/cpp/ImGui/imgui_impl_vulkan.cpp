@@ -535,6 +535,8 @@ void ImGui_ImplVulkan_RenderDrawData(ImDrawData* draw_data, VkCommandBuffer comm
 
     // Setup desired Vulkan state
     ImGui_ImplVulkan_SetupRenderState(draw_data, pipeline, command_buffer, rb, fb_width, fb_height);
+    // Multi-viewport not supported on Android
+    /*
 
     // Will project scissor/clipping rectangles into framebuffer space
     ImVec2 clip_off   = draw_data->DisplayPos;
@@ -590,6 +592,8 @@ void ImGui_ImplVulkan_RenderDrawData(ImDrawData* draw_data, VkCommandBuffer comm
     // Reset scissor to full viewport
     VkRect2D scissor = { { 0, 0 }, { (uint32_t)fb_width, (uint32_t)fb_height } };
     vkCmdSetScissor(command_buffer, 0, 1, &scissor);
+
+    */
 }
 
 bool ImGui_ImplVulkan_CreateFontsTexture()
