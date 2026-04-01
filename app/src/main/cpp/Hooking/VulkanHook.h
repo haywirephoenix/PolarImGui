@@ -8,6 +8,37 @@
 
 namespace VulkanHook {
 
+    static void* g_VulkanLib = nullptr;
+
+    static PFN_vkGetPhysicalDeviceQueueFamilyProperties _vkGetPhysicalDeviceQueueFamilyProperties = nullptr;
+    static PFN_vkGetDeviceQueue                         _vkGetDeviceQueue = nullptr;
+    static PFN_vkDeviceWaitIdle                         _vkDeviceWaitIdle = nullptr;
+    static PFN_vkGetSwapchainImagesKHR                  _vkGetSwapchainImagesKHR = nullptr;
+    static PFN_vkCreateRenderPass                       _vkCreateRenderPass = nullptr;
+    static PFN_vkCreateDescriptorPool                   _vkCreateDescriptorPool = nullptr;
+    static PFN_vkCreateCommandPool                      _vkCreateCommandPool = nullptr;
+    static PFN_vkAllocateCommandBuffers                 _vkAllocateCommandBuffers = nullptr;
+    static PFN_vkCreateImageView                        _vkCreateImageView = nullptr;
+    static PFN_vkCreateFramebuffer                      _vkCreateFramebuffer = nullptr;
+    static PFN_vkCreateFence                            _vkCreateFence = nullptr;
+    static PFN_vkCreateSemaphore                        _vkCreateSemaphore = nullptr;
+    static PFN_vkWaitForFences                          _vkWaitForFences = nullptr;
+    static PFN_vkResetFences                            _vkResetFences = nullptr;
+    static PFN_vkResetCommandBuffer                     _vkResetCommandBuffer = nullptr;
+    static PFN_vkBeginCommandBuffer                     _vkBeginCommandBuffer = nullptr;
+    static PFN_vkCmdBeginRenderPass                     _vkCmdBeginRenderPass = nullptr;
+    static PFN_vkCmdEndRenderPass                       _vkCmdEndRenderPass = nullptr;
+    static PFN_vkEndCommandBuffer                       _vkEndCommandBuffer = nullptr;
+    static PFN_vkQueueSubmit                            _vkQueueSubmit = nullptr;
+    static PFN_vkDestroyFence                           _vkDestroyFence = nullptr;
+    static PFN_vkDestroySemaphore                       _vkDestroySemaphore = nullptr;
+    static PFN_vkDestroyFramebuffer                     _vkDestroyFramebuffer = nullptr;
+    static PFN_vkDestroyImageView                       _vkDestroyImageView = nullptr;
+    static PFN_vkFreeCommandBuffers                     _vkFreeCommandBuffers = nullptr;
+    static PFN_vkDestroyCommandPool                     _vkDestroyCommandPool = nullptr;
+    static PFN_vkDestroyRenderPass                      _vkDestroyRenderPass = nullptr;
+    static PFN_vkDestroyDescriptorPool                  _vkDestroyDescriptorPool = nullptr;
+
     // Captured Vulkan state
     static VkDevice             g_Device        = VK_NULL_HANDLE;
     static VkPhysicalDevice     g_PhysicalDevice = VK_NULL_HANDLE;
@@ -40,19 +71,19 @@ namespace VulkanHook {
 
     static void CleanupFrameData() {
         if (g_Device == VK_NULL_HANDLE) return;
-        vkDeviceWaitIdle(g_Device);
+        _vkDeviceWaitIdle(g_Device);
         for (auto& f : g_Frames) {
-            if (f.framebuffer) vkDestroyFramebuffer(g_Device, f.framebuffer, nullptr);
-            if (f.imageView)   vkDestroyImageView(g_Device, f.imageView, nullptr);
+            if (f.framebuffer) _vkDestroyFramebuffer(g_Device, f.framebuffer, nullptr);
+            if (f.imageView)   _vkDestroyImageView(g_Device, f.imageView, nullptr);
             if (f.commandBuffer && g_CommandPool)
-                vkFreeCommandBuffers(g_Device, g_CommandPool, 1, &f.commandBuffer);
-            if (f.fence)       vkDestroyFence(g_Device, f.fence, nullptr);
-            if (f.semaphore)   vkDestroySemaphore(g_Device, f.semaphore, nullptr);
+                _vkFreeCommandBuffers(g_Device, g_CommandPool, 1, &f.commandBuffer);
+            if (f.fence)       _vkDestroyFence(g_Device, f.fence, nullptr);
+            if (f.semaphore)   _vkDestroySemaphore(g_Device, f.semaphore, nullptr);
         }
         g_Frames.clear();
-        if (g_RenderPass)    { vkDestroyRenderPass(g_Device, g_RenderPass, nullptr);    g_RenderPass    = VK_NULL_HANDLE; }
-        if (g_CommandPool)   { vkDestroyCommandPool(g_Device, g_CommandPool, nullptr);   g_CommandPool   = VK_NULL_HANDLE; }
-        if (g_DescriptorPool){ vkDestroyDescriptorPool(g_Device, g_DescriptorPool, nullptr); g_DescriptorPool = VK_NULL_HANDLE; }
+        if (g_RenderPass)    { _vkDestroyRenderPass(g_Device, g_RenderPass, nullptr);    g_RenderPass    = VK_NULL_HANDLE; }
+        if (g_CommandPool)   { _vkDestroyCommandPool(g_Device, g_CommandPool, nullptr);   g_CommandPool   = VK_NULL_HANDLE; }
+        if (g_DescriptorPool){ _vkDestroyDescriptorPool(g_Device, g_DescriptorPool, nullptr); g_DescriptorPool = VK_NULL_HANDLE; }
         g_SwapchainReady = false;
     }
 
@@ -63,9 +94,9 @@ namespace VulkanHook {
         g_SwapchainExtent = extent;
 
         // Get swapchain images
-        vkGetSwapchainImagesKHR(g_Device, swapchain, &g_ImageCount, nullptr);
+        _vkGetSwapchainImagesKHR(g_Device, swapchain, &g_ImageCount, nullptr);
         g_SwapchainImages.resize(g_ImageCount);
-        vkGetSwapchainImagesKHR(g_Device, swapchain, &g_ImageCount, g_SwapchainImages.data());
+        _vkGetSwapchainImagesKHR(g_Device, swapchain, &g_ImageCount, g_SwapchainImages.data());
 
         // Create render pass
         VkAttachmentDescription attachment{};
@@ -101,7 +132,7 @@ namespace VulkanHook {
         rpInfo.dependencyCount = 1;
         rpInfo.pDependencies   = &dep;
 
-        if (vkCreateRenderPass(g_Device, &rpInfo, nullptr, &g_RenderPass) != VK_SUCCESS)
+        if (_vkCreateRenderPass(g_Device, &rpInfo, nullptr, &g_RenderPass) != VK_SUCCESS)
             return false;
 
         // Create descriptor pool
@@ -113,13 +144,13 @@ namespace VulkanHook {
         poolInfo.maxSets       = 1000;
         poolInfo.poolSizeCount = 1;
         poolInfo.pPoolSizes    = poolSizes;
-        vkCreateDescriptorPool(g_Device, &poolInfo, nullptr, &g_DescriptorPool);
+        _vkCreateDescriptorPool(g_Device, &poolInfo, nullptr, &g_DescriptorPool);
 
         // Create command pool
         VkCommandPoolCreateInfo cpInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
         cpInfo.flags            = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
         cpInfo.queueFamilyIndex = g_QueueFamily;
-        vkCreateCommandPool(g_Device, &cpInfo, nullptr, &g_CommandPool);
+        _vkCreateCommandPool(g_Device, &cpInfo, nullptr, &g_CommandPool);
 
         // Create per-frame resources
         g_Frames.resize(g_ImageCount);
@@ -142,7 +173,7 @@ namespace VulkanHook {
             ivInfo.viewType         = VK_IMAGE_VIEW_TYPE_2D;
             ivInfo.format           = format;
             ivInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            vkCreateImageView(g_Device, &ivInfo, nullptr, &f.imageView);
+            _vkCreateImageView(g_Device, &ivInfo, nullptr, &f.imageView);
 
             // Framebuffer
             VkFramebufferCreateInfo fbInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
@@ -152,12 +183,16 @@ namespace VulkanHook {
             fbInfo.width           = extent.width;
             fbInfo.height          = extent.height;
             fbInfo.layers          = 1;
-            vkCreateFramebuffer(g_Device, &fbInfo, nullptr, &f.framebuffer);
+            _vkCreateFramebuffer(g_Device, &fbInfo, nullptr, &f.framebuffer);
 
-            vkAllocateCommandBuffers(g_Device, &cbInfo, &f.commandBuffer);
-            vkCreateFence(g_Device, &fenceInfo, nullptr, &f.fence);
-            vkCreateSemaphore(g_Device, &semInfo, nullptr, &f.semaphore);
+            _vkAllocateCommandBuffers(g_Device, &cbInfo, &f.commandBuffer);
+            _vkCreateFence(g_Device, &fenceInfo, nullptr, &f.fence);
+            _vkCreateSemaphore(g_Device, &semInfo, nullptr, &f.semaphore);
         }
+        // Feedur dlsym'd function pointers into the ImGui Vulkan backend
+        ImGui_ImplVulkan_LoadFunctions([](const char* name, void* userdata) {
+            return (PFN_vkVoidFunction)dlsym(userdata, name);
+        }, g_VulkanLib);
 
         // Init ImGui Vulkan backend
         ImGui_ImplVulkan_InitInfo initInfo{};
@@ -193,16 +228,16 @@ namespace VulkanHook {
             g_Device = *pDevice;
             // Find graphics queue family
             uint32_t count = 0;
-            vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &count, nullptr);
+            _vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &count, nullptr);
             std::vector<VkQueueFamilyProperties> props(count);
-            vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &count, props.data());
+            _vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &count, props.data());
             for (uint32_t i = 0; i < count; i++) {
                 if (props[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
                     g_QueueFamily = i;
                     break;
                 }
             }
-            vkGetDeviceQueue(*pDevice, g_QueueFamily, 0, &g_Queue);
+            _vkGetDeviceQueue(*pDevice, g_QueueFamily, 0, &g_Queue);
 
             // Init ImGui (context only, no backend yet)
             if (!g_Initialized) {
@@ -214,8 +249,6 @@ namespace VulkanHook {
                 io.Fonts->AddFontFromMemoryTTF(Roboto_Regular, 22, 22.0f);
                 ImGui_ImplAndroid_Init(nullptr);
                 SetupImGui();
-                SetBlackGoldTheme();
-                ImGui::GetStyle().ScaleAllSizes(3.0f);
                 g_Initialized = true;
                 __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "vkCreateDevice hooked, queue family %d", g_QueueFamily);
             }
@@ -250,19 +283,19 @@ namespace VulkanHook {
 
             auto& f = g_Frames[imageIndex];
 
-            vkWaitForFences(g_Device, 1, &f.fence, VK_TRUE, UINT64_MAX);
-            vkResetFences(g_Device, 1, &f.fence);
-            vkResetCommandBuffer(f.commandBuffer, 0);
+            _vkWaitForFences(g_Device, 1, &f.fence, VK_TRUE, UINT64_MAX);
+            _vkResetFences(g_Device, 1, &f.fence);
+            _vkResetCommandBuffer(f.commandBuffer, 0);
 
             VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
             beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-            vkBeginCommandBuffer(f.commandBuffer, &beginInfo);
+            _vkBeginCommandBuffer(f.commandBuffer, &beginInfo);
 
             VkRenderPassBeginInfo rpBegin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
             rpBegin.renderPass        = g_RenderPass;
             rpBegin.framebuffer       = f.framebuffer;
             rpBegin.renderArea.extent = g_SwapchainExtent;
-            vkCmdBeginRenderPass(f.commandBuffer, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+            _vkCmdBeginRenderPass(f.commandBuffer, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
 
             // ImGui frame
             ImGui_ImplVulkan_NewFrame();
@@ -272,8 +305,8 @@ namespace VulkanHook {
             ImGui::Render();
             ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), f.commandBuffer);
 
-            vkCmdEndRenderPass(f.commandBuffer);
-            vkEndCommandBuffer(f.commandBuffer);
+            _vkCmdEndRenderPass(f.commandBuffer);
+            _vkEndCommandBuffer(f.commandBuffer);
 
             VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
             VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
@@ -284,7 +317,7 @@ namespace VulkanHook {
             submit.pCommandBuffers      = &f.commandBuffer;
             submit.signalSemaphoreCount = 1;
             submit.pSignalSemaphores    = &f.semaphore;
-            vkQueueSubmit(g_Queue, 1, &submit, f.fence);
+            _vkQueueSubmit(g_Queue, 1, &submit, f.fence);
         }
 
         // Replace wait semaphores with our signal semaphores
@@ -304,19 +337,51 @@ namespace VulkanHook {
     }
 
     static void Install() {
-        void *vulkan = dlopen("libvulkan.so", RTLD_NOW | RTLD_NOLOAD);
-        if (!vulkan) {
+        void *vk = dlopen("libvulkan.so", RTLD_NOW | RTLD_GLOBAL);
+        if (!vk) {
             __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "libvulkan.so not found");
             return;
         }
+        g_VulkanLib = vk;
 
-        auto createDevice    = dlsym(vulkan, "vkCreateDevice");
-        auto createSwapchain = dlsym(vulkan, "vkCreateSwapchainKHR");
-        auto queuePresent    = dlsym(vulkan, "vkQueuePresentKHR");
+        #define LOAD_VK(fn) _ ## fn = (PFN_ ## fn)dlsym(vk, #fn)
+        LOAD_VK(vkGetPhysicalDeviceQueueFamilyProperties);
+        LOAD_VK(vkGetDeviceQueue);
+        LOAD_VK(vkDeviceWaitIdle);
+        LOAD_VK(vkGetSwapchainImagesKHR);
+        LOAD_VK(vkCreateRenderPass);
+        LOAD_VK(vkCreateDescriptorPool);
+        LOAD_VK(vkCreateCommandPool);
+        LOAD_VK(vkAllocateCommandBuffers);
+        LOAD_VK(vkCreateImageView);
+        LOAD_VK(vkCreateFramebuffer);
+        LOAD_VK(vkCreateFence);
+        LOAD_VK(vkCreateSemaphore);
+        LOAD_VK(vkWaitForFences);
+        LOAD_VK(vkResetFences);
+        LOAD_VK(vkResetCommandBuffer);
+        LOAD_VK(vkBeginCommandBuffer);
+        LOAD_VK(vkCmdBeginRenderPass);
+        LOAD_VK(vkCmdEndRenderPass);
+        LOAD_VK(vkEndCommandBuffer);
+        LOAD_VK(vkQueueSubmit);
+        LOAD_VK(vkDestroyFence);
+        LOAD_VK(vkDestroySemaphore);
+        LOAD_VK(vkDestroyFramebuffer);
+        LOAD_VK(vkDestroyImageView);
+        LOAD_VK(vkFreeCommandBuffers);
+        LOAD_VK(vkDestroyCommandPool);
+        LOAD_VK(vkDestroyRenderPass);
+        LOAD_VK(vkDestroyDescriptorPool);
 
-        hook(createDevice,    (void*)hook_vkCreateDevice,    (void**)&orig_vkCreateDevice);
+        auto createDevice    = dlsym(vk, "vkCreateDevice");
+        auto createSwapchain = dlsym(vk, "vkCreateSwapchainKHR");
+        auto queuePresent    = dlsym(vk, "vkQueuePresentKHR");
+    #undef LOAD_VK
+
+        hook(createDevice,    (void*)hook_vkCreateDevice,       (void**)&orig_vkCreateDevice);
         hook(createSwapchain, (void*)hook_vkCreateSwapchainKHR, (void**)&orig_vkCreateSwapchainKHR);
-        hook(queuePresent,    (void*)hook_vkQueuePresentKHR, (void**)&orig_vkQueuePresentKHR);
+        hook(queuePresent,    (void*)hook_vkQueuePresentKHR,    (void**)&orig_vkQueuePresentKHR);
 
         __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "Vulkan hooks installed");
     }
