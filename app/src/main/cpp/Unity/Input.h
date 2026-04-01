@@ -45,7 +45,7 @@ namespace Unity
         };
 
 
-        static BNM::LoadClass Input;
+        static BNM::Class Input;
         static BNM::Method<Touch> GetTouch;
         static BNM::Method<bool> GetMouseButtonDown;
         static bool is_done = false;
@@ -90,7 +90,7 @@ namespace Unity
 
         void Setup()
         {
-            Input = BNM::LoadClass("UnityEngine", "Input");
+            Input = BNM::Class("UnityEngine", "Input");
             GetTouch = Input.GetMethodByName("GetTouch", 1);
             GetMouseButtonDown = Input.GetMethodByName("GetMouseButtonDown", 1);
             HOOK(GetTouch.GetOffset(), FakeGetTouch, old_FakeGetTouch);

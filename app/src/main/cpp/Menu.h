@@ -82,7 +82,7 @@ namespace Menu {
 
             ImGui_ImplOpenGL3_NewFrame();
 
-            ImGui_ImplAndroid_NewFrame(Unity::Screen::Width.get(), Unity::Screen::Height.get());
+            ImGui_ImplAndroid_NewFrame(Unity::Screen::Width.Get(), Unity::Screen::Height.Get());
 
             ImGui::NewFrame();
             DrawMenu();
