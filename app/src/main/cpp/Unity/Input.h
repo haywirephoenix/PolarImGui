@@ -1,16 +1,16 @@
 #pragma once
 
 #include "BNM/BNM.hpp"
+#include "Unity/Screen.h"
 
-using namespace BNM::UNITY_STRUCTS;
-using namespace BNM::MONO_STRUCTS;
+using namespace BNM::UnityEngine;
 using namespace BNM;
 
 namespace Unity
 {
     namespace Input
     {
-        static enum TouchPhase{
+        enum TouchPhase {
             Began,
             Moved,
             Stationary,
@@ -18,16 +18,13 @@ namespace Unity
             Canceled
         };
 
-        static enum TouchType
-        {
+        enum TouchType {
             Direct,
             Indirect,
             Stylus
         };
 
-        using namespace BNM::UNITY_STRUCTS;
-
-        struct Touch{
+        struct Touch {
             int m_FingerId{};
             Vector2 m_Position;
             Vector2 m_RawPosition;
@@ -43,7 +40,6 @@ namespace Unity
             float m_AltitudeAngle{};
             float m_AzimuthAngle{};
         };
-
 
         static BNM::Class Input;
         static BNM::Method<Touch> GetTouch;
@@ -63,22 +59,22 @@ namespace Unity
             {
                 ImGuiIO &io = ImGui::GetIO();
                 float x = _touch.m_Position.x;
-                float y = static_cast<float>(std::round(Unity::Screen::Height())) - _touch.m_Position.y;
+                float y = static_cast<float>(std::round(Unity::Screen::Height.Get())) - _touch.m_Position.y;
 
                 if (_touch.m_Phase == TouchPhase::Began)
                 {
-                    io.AddMousePosEvent(x,y);
-                    io.AddMouseButtonEvent(0, Unity::Input::GetMouseButtonDown(0));
+                    io.AddMousePosEvent(x, y);
+                    io.AddMouseButtonEvent(0, GetMouseButtonDown(0));
                 }
                 if (_touch.m_Phase == TouchPhase::Moved)
                 {
-                    io.AddMousePosEvent(x,y);
+                    io.AddMousePosEvent(x, y);
                 }
                 if (_touch.m_Phase == TouchPhase::Ended)
                 {
-                    io.AddMouseButtonEvent(0, Unity::Input::GetMouseButtonDown(0));
-                    io.AddMouseButtonEvent(1, Unity::Input::GetMouseButtonDown(1));
-                    io.AddMouseButtonEvent(2, Unity::Input::GetMouseButtonDown(3));
+                    io.AddMouseButtonEvent(0, GetMouseButtonDown(0));
+                    io.AddMouseButtonEvent(1, GetMouseButtonDown(1));
+                    io.AddMouseButtonEvent(2, GetMouseButtonDown(3));
                 }
 
                 if (io.WantCaptureMouse)
@@ -91,8 +87,8 @@ namespace Unity
         void Setup()
         {
             Input = BNM::Class("UnityEngine", "Input");
-            GetTouch = Input.GetMethodByName("GetTouch", 1);
-            GetMouseButtonDown = Input.GetMethodByName("GetMouseButtonDown", 1);
+            GetTouch     = Input("GetTouch", 1);
+            GetMouseButtonDown = Input("GetMouseButtonDown", 1);
             HOOK(GetTouch.GetOffset(), FakeGetTouch, old_FakeGetTouch);
             is_done = true;
         }

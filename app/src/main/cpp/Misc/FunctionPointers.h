@@ -5,7 +5,12 @@
 
 #ifndef IMGUIANDROID_FUNCTIONPOINTERS_H
 #define IMGUIANDROID_FUNCTIONPOINTERS_H
-using namespace BNM::UNITY_STRUCTS;
+
+#include "BNM/BNM.hpp"
+
+using namespace BNM::UnityEngine;
+using namespace BNM;
+
 namespace Pointers {
 
     BNM::Class GameObject;
@@ -15,19 +20,20 @@ namespace Pointers {
     BNM::Property<Vector3> Transform_Position;
 
     BNM::Class Camera;
-    BNM::Method<Vector3 *> Camera_WorldToScreenPoint;
-    BNM::Property<Vector3> Camera_Main;
+    BNM::Method<Vector3> Camera_WorldToScreenPoint;
+    BNM::Property<void *> Camera_Main;
 
     void LoadPointers() {
         GameObject = BNM::Class("UnityEngine", "GameObject");
-        GameObject_Transform = GameObject.GetPropertyByName("transform");
+        GameObject_Transform = GameObject["transform"];
 
         Transform = BNM::Class("UnityEngine", "Transform");
-        Transform_Position = Transform.GetPropertyByName("position");
+        Transform_Position = Transform["position"];
 
         Camera = BNM::Class("UnityEngine", "Camera");
-        Camera_WorldToScreenPoint = Camera.GetMethodByName("WorldToScreenPoint", 1);
-        Camera_Main = Camera.GetPropertyByName("main");
+        Camera_WorldToScreenPoint = Camera("WorldToScreenPoint", 1);
+        Camera_Main = Camera["main"];
     }
 }
-#endif IMGUIANDROID_FUNCTIONPOINTERS_H
+
+#endif // IMGUIANDROID_FUNCTIONPOINTERS_H

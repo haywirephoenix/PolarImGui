@@ -1,8 +1,8 @@
 #pragma once
 #include "BNM/BNM.hpp"
 
-using namespace BNM::UNITY_STRUCTS;
-using namespace BNM::MONO_STRUCTS;
+// using namespace BNM::UNITY_STRUCTS;
+// using namespace BNM::MONO_STRUCTS;
 using namespace BNM;
 
 namespace Unity
@@ -17,8 +17,8 @@ namespace Unity
         void Setup()
         {
             Screen = BNM::Class("UnityEngine", "Screen");
-            Height = Screen.GetPropertyByName("height");
-            Width = Screen.GetPropertyByName("width");
+            Height = Screen["height"];
+            Width  = Screen["width"];
             is_done = true;
         }
     }
