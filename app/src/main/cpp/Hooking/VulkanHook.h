@@ -146,33 +146,79 @@ namespace VulkanHook {
     static void PatchAllDispatchTables() {
         void* vk = g_VulkanLib;
 
-        // These are the addresses that libhwui / libunity cached when they
-        // called vkGetInstanceProcAddr / vkGetDeviceProcAddr at startup.
+        // Get the exported addresses (what Dobby hooked)
         void* realCreateDevice    = dlsym(vk, "vkCreateDevice");
         void* realCreateSwapchain = dlsym(vk, "vkCreateSwapchainKHR");
         void* realQueuePresent    = dlsym(vk, "vkQueuePresentKHR");
 
+        // Also get what the loader internally resolves these to —
+        // libhwui calls vkGetInstanceProcAddr/vkGetDeviceProcAddr which returns
+        // loader-internal stubs, NOT the exported symbol addresses.
+        // We need to know those internal addresses to find them in data segments.
+        PFN_vkGetInstanceProcAddr getInstProc =
+            (PFN_vkGetInstanceProcAddr)dlsym(vk, "vkGetInstanceProcAddr");
+
+        // We don't have a VkInstance here, but passing VK_NULL_HANDLE to
+        // vkGetInstanceProcAddr returns the loader's pre-instance dispatch
+        // for global/instance commands, which is what libhwui caches.
+        void* loaderCreateDevice = nullptr;
+        if (getInstProc)
+            loaderCreateDevice = (void*)getInstProc(VK_NULL_HANDLE, "vkCreateDevice");
+
         __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
-            "PatchAllDispatchTables: cd=%p cs=%p qp=%p",
-            realCreateDevice, realCreateSwapchain, realQueuePresent);
+            "PatchAllDispatchTables:"
+            "\n  exported:  cd=%p cs=%p qp=%p"
+            "\n  loader(pre-inst): cd=%p",
+            realCreateDevice, realCreateSwapchain, realQueuePresent,
+            loaderCreateDevice);
+
+        // Build a list of ALL addresses we should replace for each hook.
+        // This covers both the exported address and any loader-internal variants.
+        struct PatchTarget {
+            std::vector<void*> realAddrs;
+            void*              hookAddr;
+            const char*        name;
+        };
+
+        PatchTarget targets[] = {
+            { {realCreateDevice,    loaderCreateDevice}, (void*)hook_vkCreateDevice,       "vkCreateDevice"       },
+            { {realCreateSwapchain, nullptr           }, (void*)hook_vkCreateSwapchainKHR, "vkCreateSwapchainKHR" },
+            { {realQueuePresent,    nullptr           }, (void*)hook_vkQueuePresentKHR,    "vkQueuePresentKHR"    },
+        };
+
+        // For the mystery pointer we found (0x7a76fd20f0), also try patching it
+        // directly as vkQueuePresentKHR since that's what the log suggests.
+        // dladdr it first to confirm.
+        void* mysteryPtr = (void*)0x7a76fd20f0; // from your log
+        Dl_info info{};
+        if (dladdr(mysteryPtr, &info)) {
+            __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                "Mystery ptr: %s in %s",
+                info.dli_sname ? info.dli_sname : "?",
+                info.dli_fname ? info.dli_fname : "?");
+            // If it's vkQueuePresentKHR, add it to the patch target
+            if (info.dli_sname && strstr(info.dli_sname, "Present"))
+                targets[2].realAddrs.push_back(mysteryPtr);
+            if (info.dli_sname && strstr(info.dli_sname, "CreateSwapchain"))
+                targets[1].realAddrs.push_back(mysteryPtr);
+            if (info.dli_sname && strstr(info.dli_sname, "CreateDevice"))
+                targets[0].realAddrs.push_back(mysteryPtr);
+        }
 
         int n = 0;
-
-        // libhwui owns the Vulkan context on Android 10+ when Unity uses the
-        // system Vulkan surface (which it does on Android 16).
-        n += PatchPointersInLib("libhwui.so",  realCreateDevice,    (void*)hook_vkCreateDevice,       "vkCreateDevice");
-        n += PatchPointersInLib("libhwui.so",  realCreateSwapchain, (void*)hook_vkCreateSwapchainKHR, "vkCreateSwapchainKHR");
-        n += PatchPointersInLib("libhwui.so",  realQueuePresent,    (void*)hook_vkQueuePresentKHR,    "vkQueuePresentKHR");
-
-        // libunity may have its own copies too.
-        n += PatchPointersInLib("libunity.so", realCreateDevice,    (void*)hook_vkCreateDevice,       "vkCreateDevice");
-        n += PatchPointersInLib("libunity.so", realCreateSwapchain, (void*)hook_vkCreateSwapchainKHR, "vkCreateSwapchainKHR");
-        n += PatchPointersInLib("libunity.so", realQueuePresent,    (void*)hook_vkQueuePresentKHR,    "vkQueuePresentKHR");
+        const char* libs[] = {"libhwui.so", "libunity.so"};
+        for (const char* libName : libs) {
+            for (auto& target : targets) {
+                for (void* realAddr : target.realAddrs) {
+                    if (realAddr)
+                        n += PatchPointersInLib(libName, realAddr, target.hookAddr, target.name);
+                }
+            }
+        }
 
         __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
             "PatchAllDispatchTables: %d pointers patched", n);
     }
-
     // =========================================================================
     // Cleanup
     // =========================================================================
