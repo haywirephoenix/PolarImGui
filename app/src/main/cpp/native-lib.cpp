@@ -42,6 +42,7 @@ EGLBoolean new_eglSwapBuffers(EGLDisplay _display, EGLSurface _surface) {
 }
 void OnBNMLoaded()
 {
+    LOGI("OnBNMLoaded called!");
     Unity::Screen::Setup();
     Unity::Input::Setup();
     Pointers::LoadPointers();
@@ -54,7 +55,8 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
     vm->GetEnv((void **) &env, JNI_VERSION_1_6);
 
     BNM::Loading::AddOnLoadedEvent(OnBNMLoaded);
-    BNM::Loading::TryLoadByJNI(env);
+    bool bnmLoaded = BNM::Loading::TryLoadByJNI(env);
+    LOGI("BNM TryLoadByJNI result: %d", bnmLoaded);
 
     if (!emulator) {
         UnityPlayer_cls = env->FindClass(OBFUSCATE("com/unity3d/player/UnityPlayer"));
@@ -71,13 +73,16 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
 __attribute__((constructor))
 void lib_main()
 {
+    LOGI("lib_main called");
     auto eglhandle = dlopen(OBFUSCATE("libEGL.so"), RTLD_LAZY);
+    LOGI("eglhandle: %p", eglhandle);
     const char *dlopen_error = dlerror();
     if (dlopen_error)
     {
         eglhandle = dlopen(OBFUSCATE("libunity.so"), RTLD_LAZY);
     }
     auto eglSwapBuffers = dlsym(eglhandle, OBFUSCATE("eglSwapBuffers"));
+    LOGI("eglSwapBuffers: %p", eglSwapBuffers);
     const char *dlsym_error = dlerror();
     if (dlsym_error)
     {
