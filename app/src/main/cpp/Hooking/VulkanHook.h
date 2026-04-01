@@ -6,10 +6,10 @@
 #include "../ByNameModding/external/include/dobby.h"
 #include "../Misc/Utils.h"
 
+extern unsigned char Roboto_Regular[];
 
 namespace VulkanHook {
 
-    extern unsigned char Roboto_Regular[];
     static void* g_VulkanLib = nullptr;
 
 
