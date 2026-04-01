@@ -358,6 +358,59 @@ namespace VulkanHook {
         return orig_vkQueuePresentKHR(queue, &modifiedPresent);
     }
 
+    static void* FindAndHookUnityVulkanPresent() {
+        // Get the real vkQueuePresentKHR address
+        void* vk = dlopen("libvulkan.so", RTLD_NOLOAD | RTLD_NOW);
+        void* realPresent = dlsym(vk, "vkQueuePresentKHR");
+        void* realCreateSwapchain = dlsym(vk, "vkCreateSwapchainKHR");
+        void* realCreateDevice = dlsym(vk, "vkCreateDevice");
+
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", 
+            "Scanning for Unity dispatch: realPresent=%p", realPresent);
+
+        // Find libunity.so in memory
+        FILE* maps = fopen("/proc/self/maps", "r");
+        if (!maps) return nullptr;
+
+        char line[512];
+        uintptr_t unity_start = 0, unity_end = 0;
+        while (fgets(line, sizeof(line), maps)) {
+            if (strstr(line, "libunity.so") && strstr(line, "rw-p")) {
+                sscanf(line, "%lx-%lx", &unity_start, &unity_end);
+                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                    "Found libunity.so rw segment: %lx-%lx", unity_start, unity_end);
+                break;
+            }
+        }
+        fclose(maps);
+
+        if (!unity_start) return nullptr;
+
+        // Scan for the function pointer
+        uintptr_t* ptr = (uintptr_t*)unity_start;
+        uintptr_t* end = (uintptr_t*)unity_end;
+        int found = 0;
+        while (ptr < end - 2) {
+            if (*ptr == (uintptr_t)realPresent) {
+                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                    "Found vkQueuePresentKHR ptr at %p", ptr);
+                found++;
+            }
+            if (*ptr == (uintptr_t)realCreateSwapchain) {
+                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                    "Found vkCreateSwapchainKHR ptr at %p", ptr);
+            }
+            if (*ptr == (uintptr_t)realCreateDevice) {
+                __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE",
+                    "Found vkCreateDevice ptr at %p", ptr);
+            }
+            ptr++;
+        }
+        __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", 
+            "Scan complete, found %d present ptrs", found);
+        return nullptr;
+    }
+
 
     static void Install() {
         void *vk = dlopen("libvulkan.so", RTLD_NOW | RTLD_GLOBAL);
@@ -410,6 +463,7 @@ namespace VulkanHook {
         hook(createDevice,    (void*)hook_vkCreateDevice,       (void**)&orig_vkCreateDevice);
         hook(createSwapchain, (void*)hook_vkCreateSwapchainKHR, (void**)&orig_vkCreateSwapchainKHR);
         hook(queuePresent,    (void*)hook_vkQueuePresentKHR,    (void**)&orig_vkQueuePresentKHR);
+        FindAndHookUnityVulkanPresent();
 
         __android_log_print(ANDROID_LOG_ERROR, "HAYWIRE", "Vulkan hooks installed");
     }
